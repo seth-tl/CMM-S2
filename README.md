@@ -1,4 +1,5 @@
 # Ideal-Turbulence
 -
 
-Implementation of the characteristic mapping on a bi-periodic domain
+Implementation of the characteristic mapping on some two-dimensional surfaces
+
