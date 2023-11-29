@@ -44,7 +44,7 @@ l_2 = []
 for N in Ns:
 
     start, start_clock = time.perf_counter(), time.process_time()
-    inv_map_n = sims.euler_simulation_T2(L = 512, Nt = 2*N, T = T, Nx = N,
+    inv_map_n = sims.euler_simulation_T2(L = 256, Nt = 2*N, T = T, Nx = N,
                                          vorticity = omega_0)
 
     finish, finish_clock = time.perf_counter(), time.process_time()
