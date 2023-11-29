@@ -1,6 +1,8 @@
 # ------------------------------------------------------------------------------
 """
 Basic script to test the vorticity equation solver on the sphere
+
+TODO: There's a bug somewhere since the convergence is not correct
 """
 # ------------------------------------------------------------------------------
 import numpy as np
