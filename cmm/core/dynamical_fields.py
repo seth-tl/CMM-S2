@@ -87,13 +87,15 @@ def u_deform_rot(t,dt,X):
     return u_sr +  u_rot
 
 rho_0 = 3. # constant defining vortex
+def sech(x):
+    return 1/np.cosh(x)
 
 def omega_r(theta):
 
     c_the = np.sin(theta)
     outs = 0*theta
     outs[np.where(theta != 0.)] = (2*pi)*np.sqrt(3)*(3/2)*(1/(rho_0*c_the[np.where(theta != 0)]))\
-    *np.tanh(rho_0*c_the[np.where(theta != 0)])*(np.sech(rho_0*c_the[np.where(theta!=0)])**2)
+    *np.tanh(rho_0*c_the[np.where(theta != 0)])*(sech(rho_0*c_the[np.where(theta!=0)])**2)
 
     return outs
 
@@ -103,7 +105,7 @@ def u_static_vortex(t, dt, X):
     c_the = np.sin(theta)
     omg = 0*theta
     omg[np.where(theta != 0.)] = (2*pi)*np.sqrt(3)*(3/2)*(1/(rho_0*c_the[np.where(theta != 0)]))\
-    *np.tanh(rho_0*c_the[np.where(theta != 0)])*(np.sech(rho_0*c_the[np.where(theta!=0)])**2)
+    *np.tanh(rho_0*c_the[np.where(theta != 0)])*(sech(rho_0*c_the[np.where(theta!=0)])**2)
 
     return np.array([-X[1]*omg, X[0]*omg, 0*X[2]])
 
@@ -117,6 +119,13 @@ def u_rotating_vortex(t, dt, X):
     u_rot = u_sbr(t,dt,X)
 
     return u_sr + u_rot
+
+def equator_vortex(t, dt, X):
+    #transform into rotating system
+    X_r = utils.rotate(utils.Rot_x(pi/2), X)
+    u_prime = u_static_vortex(t,dt, X_r)
+    u_sr =  utils.rotate(utils.Rot_x(pi/2).T, u_prime)
+    return np.array(u_sr)
 
 def static_vort_IC(t,xyz):
     phi, theta = utils.cart2sphere(xyz)
@@ -256,14 +265,15 @@ def zonal_jet(phi, theta):
     u_lt = (pi/2)*np.exp(-2*beta2*(1-np.cos(-theta+pi/2-theta_c)))
     return (np.cos(-theta+pi/2)*(2*beta2*(np.cos(theta_c)*np.sin(-theta+pi/2) - np.sin(theta_c)*np.cos(-theta+pi/2))) + np.sin(pi/2 - theta))*u_lt
 
+pert = 0.01
 def perturbed_zonal_jet(phi, theta):
     beta2 = 12**2
-    theta_c = pi/4 + 0.01*cos(pert*phi)
+    theta_c = pi/4 + 0.01*np.cos(pert*phi)
     u_lt = (pi/2)*np.exp(-2*beta2*(1-np.cos(-theta+pi/2-theta_c)))
     return (np.cos(-theta+pi/2)*(2*beta2*(np.cos(theta_c)*np.sin(-theta+pi/2) - np.sin(theta_c)*np.cos(-theta+pi/2))) + np.sin(pi/2 - theta))*u_lt
 
 def gaussian_vortex(phi, theta):
-    [x,y,z] = sphere2cart(phi,theta)
+    [x,y,z] = utils.sphere2cart(phi,theta)
     sigma, C = 1/16, 4*pi
     return C*np.exp(-((x-1)**2 + y**2 + z**2)/sigma)
 
@@ -279,5 +289,5 @@ def rossby_wave(phi, theta, t = 0):
 # perturbed Rossby-Haurwitz wave
 
 def perturbed_rossby_wave(phi, theta):
-    return 30*cos(theta)*cos(4*phi)*sin(theta)**4 + 0.1*sin(theta)*cos(30*theta)
+    return 30*np.cos(theta)*np.cos(4*phi)*np.sin(theta)**4 + 0.1*np.sin(theta)*np.cos(30*theta)
 

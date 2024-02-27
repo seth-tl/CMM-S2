@@ -38,11 +38,11 @@ def inv_Laplacian(samples,L, Method = "MWSS", Spin = 0):
     return L_flm
 
 
-def MW_sampling(L):
+def MW_sampling(L, method = "MWSS"):
     # Sampling defined by the sampling theorem of McEwen and Wiaux on the sphere
     # input: Bandlimit L
     # output: meshgrid
-    [thetas, phis] = pysh.sample_positions(L, Method = "MWSS", Grid = False)
+    [thetas, phis] = pysh.sample_positions(L, Method = method, Grid = False)
     [Phi, The] = np.meshgrid(phis, thetas)
 
     return [Phi, The]
@@ -99,7 +99,7 @@ def angular_momentum(alms, L):
 
 #--------------Projection onto spline space: -----------------------------------
 def prune(A):
-    # helpter function for projection operation
+    # helper function for projection operation
     outs = A[1:-1,:].real
     outs = list(outs.reshape([len(outs[0,:])*len(outs[:,0]),]))
     outs.append(A[-1,0])
@@ -139,7 +139,7 @@ def project_onto_S12_PS_vector(alms, L, grid, Method = "MWSS"):
         u_lms = [lm_array(A,L) for A in angular_momentum(flm,L)]
         u_num = [pysh.inverse(u_lms[i], L, Spin = 0, Method = Method, Reality = True, backend = 'ducc', nthreads = 7) for i in range(3)]
         # gradient operator
-        grad_vals = utils.tan_proj(utils.cross(u_num,[X,Y,Z]), [X,Y,Z])
+        grad_vals = tan_proj(utils.cross(u_num,[X,Y,Z]), [X,Y,Z])
         vals = pysh.inverse(lm_array(flm, L), L, Spin = 0, Method = Method, Reality = True, backend = 'ducc', nthreads = 7)
 
         # vals and grad_vals should 1-D arrays
@@ -149,6 +149,7 @@ def project_onto_S12_PS_vector(alms, L, grid, Method = "MWSS"):
 
         values.append(np.array(vals_n))
         grad_values.append(np.array(grad_vals_n))
+    
 
     # arrange gradient
     interpolant = spline_interp_vec(grid = grid["mesh"], simplices = grid["simplices"],

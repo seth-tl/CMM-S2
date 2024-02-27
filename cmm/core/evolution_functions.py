@@ -7,6 +7,7 @@ most core components of the CMM for advection.
 # imports
 import numpy as np
 import pdb
+import numba as nb
 from . import mesh_functions as meshes
 from .interpolants.spherical_spline import sphere_diffeomorphism
 from .interpolants.torus_interpolants import Hermite_Map, Hermite_T2
@@ -28,7 +29,6 @@ def Euler_step_proj(t,dt,xn,V):
 
 def improved_Euler_proj(t,dt,xn,V):
     #backwards in time improved Euler scheme
-    tpdt = t + dt
     # step 1:
     v1 = V(t,dt,xn)
     step1 = div_norm(xn-dt*v1)
@@ -43,13 +43,14 @@ def RK3_proj(t,dt,xn,V):
     v1 = V(tpdt, dt, xn)
 
     step1 = div_norm(xn-dt*v1, xn, v1)
-    v2 = V(t, dt, v1)
+    v2 = V(t, dt, step1)
 
     step2 = div_norm(xn - (dt/4)*(v1+v2))
     v3 = V(t+0.5*dt, dt, step2)
 
     xn1 = xn - dt*((1/6)*v1 + (1/6)*v2 + (2/3)*v3)
     return div_norm(xn1)
+
 
 def RK4_proj(t,dt,xn,V):
     #backwards RK4 combined with projection step
@@ -135,7 +136,6 @@ def epsilon_diff4(evals, interpolant, eps):
 
     # re-express in Cartesian coordinates and arrange appropriately
     gammas = interpolant.mesh.tan_vects
-
     # TODO: get rid of this clunky rearrangement
     grad_vals = [(df_dx1[0][:,None]*gammas[0] + df_dx2[0][:,None]*gammas[1]).T,
                  (df_dx1[1][:,None]*gammas[0] + df_dx2[1][:,None]*gammas[1]).T,
@@ -148,6 +148,8 @@ def spline_proj_sphere(interpolant, s_pts, eps= 1e-5):
     vals, grad_vals = epsilon_diff4(s_pts, interpolant, eps)
     #normalize
     vals = utils.div_norm(vals.T)
+
+    #update the values of the interpolant:
     return sphere_diffeomorphism(mesh = interpolant.mesh, vals = vals, grad_vals = grad_vals)
 
 
@@ -161,7 +163,7 @@ def advect(interp, integrator, t, dt, V, identity = False):
         yn = integrator(t, dt, verts0, V)
         s = np.shape(spts)
         spts_n = integrator(t,dt, spts.reshape([3,s[1]*s[2]]),V)
-
+        
         if identity == False:
             #perform evaluation of stencil points at previous map
             s_evals = interp.stencil_eval(q_pts = yn, st_pts = spts_n.reshape(s))
@@ -175,6 +177,14 @@ def advect(interp, integrator, t, dt, V, identity = False):
             # outsz = [outs0[2,:], outs1[2,:], outs2[2,:], outs3[2,:]]
             #
             # return [outsx, outsy, outsz]
+
+def advect_project_sphere(interp, integrator, t, dt, V, identity = False):
+    # combines advection and projection steps and redefines the interpolant
+    # basic function for the time stepping in the CMM on sphere
+    s_evals = advect(interp, integrator, t, dt, V, identity)
+    interp = spline_proj_sphere(interp, s_evals)
+
+    return interp
 
 def hermite_stencil_eval(interpolant, eps1, eps2, eps3, eps4, yn):
 
@@ -338,13 +348,7 @@ def compose_maps(remaps, evals, current = []):
         evals = rev_maps[i](evals)
     return evals
 
-def advect_project_sphere(interp, integrator, t, dt, V, identity = False):
-    # combines advection and projection steps and redefines the interpolant
-    # basic function for the time stepping in the CMM on sphere
-    s_evals = advect(interp, integrator, t, dt, V, identity)
-    interp = spline_proj_sphere(interp, s_evals)
 
-    return interp
 
 def advect_project_channel(interp, integrator, t, dt, V, identity = False):
     # combines advection and projection steps and redefines the interpolant

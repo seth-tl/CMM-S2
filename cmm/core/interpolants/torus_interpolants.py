@@ -5,6 +5,7 @@ Base classes for Hermite interpolants on periodic domains
 #/----
 from numpy import absolute, array, shape, sum, where, pi, meshgrid
 import numpy as np
+import pdb
 #-----------------------------------------------------------------------------
 
 class hermite_density():
@@ -50,7 +51,14 @@ class Hermite_Map():
 
     def __call__(self,X):
         out_x = (X[0] + self.Chi_x.eval(X[0],X[1])) % (2*pi)
-        out_y = (X[1] + self.Chi_y.eval(X[0],X[1])) % (2*pi)
+        out_y = (X[1] + self.Chi_y.eval(X[0],X[1])) % (2*pi)     
+
+        return np.array([out_x, out_y])
+    
+    def eval_displacement(self, X):
+        out_x = self.Chi_x.eval(X[0],X[1])
+        out_y = self.Chi_y.eval(X[0],X[1])
+
         return np.array([out_x, out_y])
 
     def grad(self, X):
@@ -87,8 +95,8 @@ class Bilinear_Map():
         return
     def __call__(self, xy):
         
-        x = self.X(xy) % (2*np.pi)
-        y = self.Y(xy) % (2*np.pi)
+        x = (xy[0] + self.X(xy)) % (2*np.pi)
+        y = (xy[1] + self.Y(xy)) % (2*np.pi)
 
         return np.array([x,y])
 
@@ -105,18 +113,14 @@ class Bilinear_T2():
     
     def eval(self, x, y):
 
-        x = np.asarray(x)
-        y = np.asarray(y)
+        dx = self.xs[1]-self.xs[0]; dy = self.ys[1]-self.ys[0]
 
-        x0 = np.searchsorted(self.xs, x, side='right') - 1
-        x1 = x0 + 1
+        x0 = (x//dx).astype(int); x1 = x0 + 1
+        y0 = (y//dy).astype(int); y1 = y0 + 1
 
-        # Handle periodicity in the x-direction
+        # Handle periodicity in both directions
         x0[x0 < 0] = len(self.xs) - 1
         x1[x1 >= len(self.xs)] = 0
-
-        y0 = np.searchsorted(self.ys, y, side='right') - 1
-        y1 = y0 + 1
 
         y0[y0 < 0] = len(self.ys) - 1
         y1[y1 >= len(self.ys)] = 0
@@ -226,15 +230,15 @@ class Hermite_T2():
             B_phi = self.basis_eval(Evals[0], dx)
             B_theta = self.basis_eval(Evals[1], dy)
 
-        if deriv == "dx":
+        elif deriv == "dx":
             B_phi = self.basis_eval_deriv(Evals[0], dx)
             B_theta = self.basis_eval(Evals[1], dy)
 
-        if deriv == "dy":
+        elif deriv == "dy":
             B_phi = self.basis_eval(Evals[0], dx)
             B_theta = self.basis_eval_deriv(Evals[1], dy)
 
-        if deriv == "dxdy":
+        elif deriv == "dxdy":
             B_phi = self.basis_eval_deriv(Evals[0], dx)
             B_theta = self.basis_eval_deriv(Evals[1], dy)
 
@@ -258,8 +262,63 @@ class Hermite_T2():
                       self.Kron(B_x = [B_phi[2], B_phi[3]], B_y = [B_theta[2], B_theta[3]])])
 
         U = sum(B_tmp[0].T*ff.T, axis = 1)
+
         # adjust values to incorporate the metric
         return U.reshape([MM, NN])
+
+    def eval_for_map(self, phi0, theta0, ijs, Evals, deriv = "zero"):
+        NN = len(phi0[0,:])
+        MM = len(theta0[:,0])
+        dx = self.mesh.xs[1] - self.mesh.xs[0]
+        dy = self.mesh.ys[1] - self.mesh.ys[0]
+
+        ijs, Evals = self.mesh.query(phi0, theta0)
+
+        # For the endpoint:
+        ijsp1 = [ijs[0] + 1, ijs[1] + 1]
+        ijsp1[0] = ijsp1[0] % (len(self.mesh.xs))  
+        ijsp1[1] = ijsp1[1] % (len(self.mesh.ys)) 
+
+        if deriv == "zero":
+            B_phi = self.basis_eval(Evals[0], dx)
+            B_theta = self.basis_eval(Evals[1], dy)
+
+        elif deriv == "dx":
+            B_phi = self.basis_eval_deriv(Evals[0], dx)
+            B_theta = self.basis_eval(Evals[1], dy)
+
+        elif deriv == "dy":
+            B_phi = self.basis_eval(Evals[0], dx)
+            B_theta = self.basis_eval_deriv(Evals[1], dy)
+
+        elif deriv == "dxdy":
+            B_phi = self.basis_eval_deriv(Evals[0], dx)
+            B_theta = self.basis_eval_deriv(Evals[1], dy)
+
+
+        #Build arrays containing all necessary values
+        # Arrays will have size [N**2, 16]
+
+        ff = array([array(self.f[ijs[1], ijs[0]]).reshape([NN*MM,]), array(self.f[ijs[1], ijsp1[0]]).reshape([NN*MM,]),
+              array(self.f[ijsp1[1], ijs[0]]).reshape([NN*MM,]), array(self.f[ijsp1[1], ijsp1[0]]).reshape([NN*MM,]),
+              array(self.f_x[ijs[1], ijs[0]]).reshape([NN*MM,]), array(self.f_x[ijs[1], ijsp1[0]]).reshape([NN*MM,]),
+              array(self.f_x[ijsp1[1], ijs[0]]).reshape([NN*MM,]), array(self.f_x[ijsp1[1], ijsp1[0]]).reshape([NN*MM,]),
+              array(self.f_y[ijs[1], ijs[0]]).reshape([NN*MM,]), array(self.f_y[ijs[1], ijsp1[0]]).reshape([NN*MM,]),
+              array(self.f_y[ijsp1[1], ijs[0]]).reshape([NN*MM,]), array(self.f_y[ijsp1[1], ijsp1[0]]).reshape([NN*MM,]),
+              array(self.f_xy[ijs[1], ijs[0]]).reshape([NN*MM,]), array(self.f_xy[ijs[1], ijsp1[0]]).reshape([NN*MM,]),
+              array(self.f_xy[ijsp1[1], ijs[0]]).reshape([NN*MM,]), array(self.f_xy[ijsp1[1], ijsp1[0]]).reshape([NN*MM,])])
+
+
+        B_tmp = array([self.Kron(B_x = [B_phi[0], B_phi[1]], B_y = [B_theta[0], B_theta[1]]) + \
+                      self.Kron(B_x = [B_phi[2], B_phi[3]], B_y = [B_theta[0], B_theta[1]]) + \
+                      self.Kron(B_x = [B_phi[0], B_phi[1]], B_y = [B_theta[2], B_theta[3]]) + \
+                      self.Kron(B_x = [B_phi[2], B_phi[3]], B_y = [B_theta[2], B_theta[3]])])
+
+        U = sum(B_tmp[0].T*ff.T, axis = 1)
+
+        # adjust values to incorporate the metric
+        return U.reshape([MM, NN])
+
 
     def eval_grad(self, phi0, theta0):
 
@@ -292,7 +351,7 @@ class Hermite_T2():
         ijsny = where(ijs[1] == len(self.mesh.ys))
 
         # send to 0:
-        theta0[ijsny] = 0.; phi0[ijsnx] = 0.;
+        theta0[ijsny] = 0.; phi0[ijsnx] = 0.
 
         # then mod out :
         ijs = [ijs[0] % len(self.mesh.xs), ijs[1] % len(self.mesh.ys)]

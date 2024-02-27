@@ -8,6 +8,7 @@ import stripy, igl, pdb
 import numpy as np
 from . import utils
 from scipy.spatial import Delaunay, ConvexHull, cKDTree
+from numba import njit
 # -----------------------------------------------------------------------------
 
 # basic 2D mesh classes
@@ -41,11 +42,8 @@ class spherical_triangulation(object):
         self.x, self.y, self.z = s_tri.x, s_tri.y, s_tri.z
 
         # option to precompute stencil points or pass from another mesh
-        if stencils == None:
-            self.stencil_pts()
-        else:
-            self.s_pts = stencils
-
+        self.stencil_pts()
+        
         return
 
     def query(self, q_pts):
@@ -104,13 +102,12 @@ class spherical_triangulation(object):
         # barycentric coordinates of the edge vectors
         e_1, e_2, e_3 = utils.bary_coords(v1,v2,v3,e1), utils.bary_coords(v1,v2,v3,e2), utils.bary_coords(v1,v2,v3,e3)
 
-        #assemble into nice lists, naming subject to scrutiny
-        verts = [v1,v2,v3,v4]
+        # organize data, naming subject to scrutiny
         Hs = [h12.T, h21.T, h23.T, h32.T, h13.T, h31.T, h41.T, h42.T, h43.T]
         Gs = [g12, g21, g23, g32, g13, g31, g14, g24, g34, mid]
         Es = [e_1, e_2, e_3]
 
-        return [Hs, Gs, Es]
+        return Hs, Gs, Es
 
     def stencil_pts(self, eps = 1e-5):
         # void function to precompute the stencil points on the mesh
@@ -148,7 +145,7 @@ class spherical_triangulation(object):
 
         #save directions for later use
         self.tan_vects = [a1_n, a2_n]
-        self.s_pts = spts
+        self.s_pts = np.array(spts)
 
         return
 
@@ -380,8 +377,7 @@ class torus_mesh():
         self.xs = np.linspace(0, 2*np.pi, Nx, endpoint = False)
         self.ys = np.linspace(0, 2*np.pi, Ny, endpoint = False)
 
-        Phi, Theta = np.meshgrid(self.xs, self.ys)
-        X0 = [Phi, Theta]
+        X0 = np.meshgrid(self.xs, self.ys)
         self.vertices = X0
         # initialize the stencil points
         eps = 1e-5
@@ -391,8 +387,6 @@ class torus_mesh():
         return
     
     def query(self, phi0, theta0):
-        NN = len(phi0[0,:])
-        MM = len(theta0[:,0])
 
         phi = phi0 % (2*np.pi)
         theta = theta0 % (2*np.pi)
@@ -413,8 +407,8 @@ class torus_mesh():
         ijs = [ijs[0] % len(self.xs), ijs[1] % len(self.ys)]
 
 
-        ijs = [((phi-self.xs[0])//dphi).astype(int) % (len(self.xs)),
-               ((theta-self.ys[0])//dthe).astype(int) % (len(self.ys))]
+        # ijs = [((phi-self.xs[0])//dphi).astype(int) % (len(self.xs)),
+        #        ((theta-self.ys[0])//dthe).astype(int) % (len(self.ys))]
 
         q_pts = [(phi-self.xs[ijs[0]])/dphi,(theta-self.ys[ijs[1]])/dthe]
 
@@ -467,25 +461,25 @@ def full_assembly(N,M):
 
 
     # # now populate a meshgrid with these simplices
-    msimplices = np.empty([M-1,N,2], dtype = object)
+    msimplices = np.empty([M-1,N,2, 4], dtype = int)
 
     #populate the data structure
     #first row
     for j in range(N):
-        msimplices[0,j,0] = simplices_p1[j]
-        msimplices[0,j,1] = simplices_p1[j]
+        msimplices[0,j,0,:] = simplices_p1[j]
+        msimplices[0,j,1,:] = simplices_p1[j]
 
     #middle section of rectangles
     k = N
     for i in range(1,M-2):
         for j in range(N):
-            msimplices[i,j,0] = simplices_p1[k]
-            msimplices[i,j,1] = simplices_p1[k+1]
+            msimplices[i,j,0,:] = simplices_p1[k]
+            msimplices[i,j,1,:] = simplices_p1[k+1]
             k +=2
     #last row
     for j in range(N):
-        msimplices[M-2,j,0] = simplices_p1[j-N]
-        msimplices[M-2,j,1] = simplices_p1[j-N]
+        msimplices[M-2,j,0,:] = simplices_p1[j-N]
+        msimplices[M-2,j,1,:] = simplices_p1[j-N]
 
     return simps, msimplices
 
