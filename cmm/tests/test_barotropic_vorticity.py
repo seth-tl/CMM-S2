@@ -1,12 +1,10 @@
 # ------------------------------------------------------------------------------
 """
 Basic script to test the vorticity equation solver on the sphere
-
-TODO: There's a bug somewhere since the convergence is not correct
 """
 # ------------------------------------------------------------------------------
 import numpy as np
-import pdb, stripy, time
+import pdb, stripy, time, pickle
 import pyssht as pysh
 from ..core.interpolants.spherical_spline import sphere_diffeomorphism
 from ..core import evolution_functions as evol
@@ -23,9 +21,15 @@ phis = np.linspace(0, 2*np.pi, N_pts, endpoint = False)
 thetas = np.linspace(0, np.pi, N_pts, endpoint = False)
 XX = np.meshgrid(phis, thetas)
 
-vorticity = vel.rossby_wave
+name = "zonal_jet"
+vorticity = vel.zonal_jet
 
-omega_true = vorticity(XX[0], XX[1], t = 1)
+if name == "rossby_wave":
+    omega_true = vorticity(XX[0], XX[1], t = 1)
+
+else:
+    omega_true = vorticity(XX[0], XX[1])
+
 # these are used to define the velocity field.
 s_points = utils.sphere2cart(XX[0],XX[1]) # the sample points of size (3, L+1, 2*L)
 eval_pts = np.array([s_points[0].reshape([N_pts*N_pts,]), s_points[1].reshape([N_pts*N_pts,]),
@@ -42,9 +46,11 @@ Enst = []
 
 resolutions = [16, 32, 64, 128, 256, 512, 1024]
 
-for k in range(8):
+remapping = False
+
+for k in range(7):
     ico_k = k+1
-    L = resolutions[k] #2**(k+1) + 10
+    L = 256 #resolutions[k] #2**(k+1) + 10
     T = 1
     t_res = L//2
     n_maps = 20
@@ -55,16 +61,23 @@ for k in range(8):
 
     # run and time the simulation:
     start, start_clock = time.perf_counter(), time.process_time()
-    maps = euler_simulation_rotating_sphere(L, t_res, T, mesh, vorticity)
+
+    if remapping:
+        maps = euler_simulation_rotating_sphere_remapping(L, t_res, T, n_maps, mesh, vorticity)
+
+    else:
+        maps = euler_simulation_rotating_sphere(L, t_res, T, mesh, vorticity)
 
     finish, finish_clock = time.perf_counter(), time.process_time()
 
     print("wall time (s):", finish - start)
     print("CPU time (s):", finish_clock - start_clock)
 
+    if remapping:
+        evals = evol.compose_maps(maps, eval_pts)
+    else:
+        evals = maps(eval_pts)
 
-#     evals = evol.compose_maps(remaps, eval_pts)
-    evals = maps(eval_pts)
     angs = utils.cart2sphere(evals)
     angs = [angs[0].reshape([N_pts, N_pts]), angs[1].reshape([N_pts, N_pts])]
 
@@ -78,3 +91,12 @@ for k in range(8):
     l_inf_k = np.max(np.absolute(omega_true - omega_num))
     l_inf.append(l_inf_k)
     print("L-inf error:", l_inf_k)
+
+    #save the data:
+    if remapping:
+        file = open('./data/convergence_test_%s_%s_remapping.txt' %(name, L), "wb")
+        pickle.dump(maps, file)
+
+    else:
+        file = open('./data/convergence_test_%s_%s.txt' %(name, L), "wb")
+        pickle.dump(maps, file)

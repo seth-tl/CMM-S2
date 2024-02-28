@@ -1,4 +1,5 @@
 from ..core import spectral_tools as spectral
+from ..core import dynamical_fields as vel
 import numpy as np
 import pdb
 import scipy
@@ -12,6 +13,7 @@ def omg(X):
 
 def psi(X):
     return np.sin(90*X[1])
+
 
 
 for N in Ns:

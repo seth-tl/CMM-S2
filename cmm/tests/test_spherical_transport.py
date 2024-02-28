@@ -19,8 +19,8 @@ names = ['sbr0', 'sbrpi2', 'sbrpi4', 'off_axis', 'deformational', 'rotating_defo
 # parameters to identify the file
 name = names[0] # name of test case
 U = velocity.u_deform_rot # advecting velocity field
-T = 5 # final integration time
-remapping = True # flag for remapping
+T = 1 # final integration time
+remapping = False # flag for remapping
 n_maps = 10 # default parameter for remapping steps
 ##-----------------------------------------------------------------------------
 
@@ -40,7 +40,7 @@ tri_size, l_inf, linf_map, linf_grad_map = [], [], [], []
 # convergence test for linear advection solver
 # test function to check the tracer error
 def test_func(xyz):
-    x = xyz[:,0]; y = xyz[:,1]; z = xyz[:,2];
+    x = xyz[:,0]; y = xyz[:,1]; z = xyz[:,2]
     return np.sin(x**2)*(10*np.cos(y-2)) + np.cos(10*z**5) + 2*np.sin(x*3*(z-0.1) + y**7)
 
 u_true = test_func(eval_pts.T)
@@ -49,10 +49,10 @@ for j in range(7):
 
     ico0 = stripy.spherical_meshes.icosahedral_mesh(refinement_levels=j)
     mesh = meshes.spherical_triangulation(ico0.points)
-    vals = [mesh.x, mesh.y, mesh.z]
-    grad_vals = [utils.grad_x(mesh.vertices.T),
+    vals = np.array([mesh.x, mesh.y, mesh.z])
+    grad_vals = np.array([utils.grad_x(mesh.vertices.T),
                  utils.grad_y(mesh.vertices.T),
-                 utils.grad_z(mesh.vertices.T)]
+                 utils.grad_z(mesh.vertices.T)])
 
     # note this is only suitable for the icosahedral discretization
     # largest radius for circumscribed triangle.
@@ -65,7 +65,6 @@ for j in range(7):
     Nt = 2**j + 10 # number of time steps
     tspan = np.linspace(0, T, Nt, endpoint = False)
     dt = tspan[1]-tspan[0]
-    count = 0
 
     # initialize empty list for remaps.
     # memory could be pre-allocated if a known number of maps is used
@@ -78,6 +77,7 @@ for j in range(7):
     start, start_clock = time.perf_counter(), time.process_time()
     identity = True
 
+    count = 1
     for t in tspan:
         jr = False #"just remapped"
         mapping = evol.advect_project_sphere(mapping, evol.RK4_proj, t, dt, U, identity)

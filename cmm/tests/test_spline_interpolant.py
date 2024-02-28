@@ -173,7 +173,58 @@ from ..core.interpolants import torus_interpolants as interpT2
 # ==============================================================================
 # Bilinear T2 test
 
-N = 2000
+# N = 2000
+# phis = np.linspace(0, 2*np.pi, N)
+# theta = np.linspace(0, 2*np.pi, N)
+# eval_pts = np.meshgrid(phis, theta)
+
+
+# l_inf = []
+# mesh_size = []
+
+# def test_func(X):
+#     return np.sin(X[0]) + np.cos(X[1])
+
+# u_true = test_func(eval_pts)
+# Ns = [16, 32, 64, 128, 256, 512, 1024]
+# for N in Ns:
+
+#     xs = np.linspace(0, 2*np.pi, N)
+#     ys = np.linspace(0, 2*np.pi, N)
+#     X = np.meshgrid(xs, ys)
+#     vals = test_func(X)
+
+#     # define interpolant:
+#     interpolant = interpT2.Bilinear_T2(xs, ys, vals)
+#     # timing the evaluation both in CPU and wallclock time
+#     start, start_clock = time.perf_counter(), time.process_time()
+
+#     u_num = interpolant(eval_pts)
+
+#     finish, finish_clock = time.perf_counter(), time.process_time()
+
+#     print("wall time (s):", finish - start)
+#     print("CPU time (s):", finish_clock - start_clock)
+
+
+#     # compute l-inf error at the query points
+#     error = np.max(np.absolute(u_num - u_true))
+#     mesh_size.append(2*np.pi/N)
+#     l_inf.append(error)
+
+#     print("error:", error)
+
+# # convergence against triangle maximum edge length -----
+# l_inf = np.array(l_inf)
+# areas = np.array(mesh_size)
+# orders = np.log(l_inf[1::]/l_inf[0:-1])/np.log(areas[1::]/areas[0:-1])
+# print("order of convergence:",orders)
+# print("l-inf errors:", l_inf)
+
+
+# ==================================================================================
+# Hermite cubic convergence test
+N = 100
 phis = np.linspace(0, 2*np.pi, N)
 theta = np.linspace(0, 2*np.pi, N)
 eval_pts = np.meshgrid(phis, theta)
@@ -182,25 +233,37 @@ eval_pts = np.meshgrid(phis, theta)
 l_inf = []
 mesh_size = []
 
-def test_func(X):
 
-    return np.sin(X[0]) + np.cos(X[1])
+def f(X):
+    return np.sin(30*X[0])*np.cos(20*X[1])
 
-u_true = test_func(eval_pts)
+def df_dx(X):
+    return 30*np.cos(30*X[0])*np.cos(20*X[1])
+
+def df_dy(X):
+    return -20*np.sin(30*X[0])*np.sin(20*X[1])
+
+def df_dxdy(X):
+    return -600*np.cos(30*X[0])*np.sin(20*X[1])
+         
+
+u_true = f(eval_pts)
 Ns = [16, 32, 64, 128, 256, 512, 1024]
+
 for N in Ns:
 
-    xs = np.linspace(0, 2*np.pi, N)
-    ys = np.linspace(0, 2*np.pi, N)
-    X = np.meshgrid(xs, ys)
-    vals = test_func(X)
-
+    mesh = meshes.torus_mesh(N,N)
+    
     # define interpolant:
-    interpolant = interpT2.Bilinear_T2(xs, ys, vals)
+    interpolant = interpT2.Hermite_T2(mesh, f = f(mesh.vertices),
+                                      f_x = df_dx(mesh.vertices),
+                                      f_y = df_dy(mesh.vertices),
+                                      f_xy = df_dxdy(mesh.vertices))
+    
     # timing the evaluation both in CPU and wallclock time
     start, start_clock = time.perf_counter(), time.process_time()
 
-    u_num = interpolant(eval_pts)
+    u_num = interpolant(eval_pts[0], eval_pts[1])
 
     finish, finish_clock = time.perf_counter(), time.process_time()
 
