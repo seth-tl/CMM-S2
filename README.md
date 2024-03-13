@@ -8,8 +8,8 @@
 
 The implementation is capable of simulating turbulent fluid dynamics on a rotating sphere in the form of the barotropic vorticity equations. It possess a number of unique resolution properties including the ability to upsample the solution with the correct statistics at subgrid scales and to coherently transport a multi-scale field. 
 
-![image](./docs/assets/multi_jet_evolution.png)
-![image](./docs/assets/multi_jet_zoom.png)
+![image](./docs/assets/multi_jet_evolution_redo.png)
+![image](./docs/assets/multi_jet_redo_zoom.png)
 
 
 It further provides a base solver class for the transport equation, which can be ported into other solvers for tracer and flow map analysis. An interface for more general velocity field data and ERA5 data is in the works. 
