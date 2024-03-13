@@ -1,4 +1,5 @@
-<img align="left" height="85" width="98" src="./docs/assets/cmm-s2_logo.png">
+<img align="left" height="100" width="100" src="./docs/assets/cmm-s2_logo.png">
+
 # The Spherical Characteristic Mapping Method
 
 `CMM-S2` is a Python implementation of the Characteristic Mapping Method (CMM) on a spherical geometry. The CMM is a semi-Lagrangian scheme which computes the evolution of the inverse map through a spatiotemporal discretization formed by a composition of sub-interval flows. These are each represented as spline interpolants computing using the gradient-augmented level set method. This repository catalogues a collection of functions and tests relevant to this computation for linear advection and the incompressible Euler equations on the two-torus and on the sphere. It contains all relevant code needed to reproduce the figures and data in the papers [1](https://www.sciencedirect.com/science/article/pii/S0021999122009688?casa_token=XLpApKjiy_wAAAAA:d0pBJ0JlQfz7WpwiINySp_ceZF8ECV9v8xHKZ9PWz3QP7bKiyutZBS1HfOcpuk8L5_JQXCtD3g) and [2](https://arxiv.org/pdf/2302.01205.pdf). The repository will be actively maintained and extended to solve other types of flows in different domains.
