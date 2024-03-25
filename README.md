@@ -16,7 +16,9 @@ The current implementation is capable of simulating turbulent fluid dynamics on 
 # Structure and Dependencies
 
 The `cmm-s2/core/` folder contains all core algorithms related to the time-stepping, interpolation, and the simulations. 
+
 The `cmm-s2/tests/` folder contains unit tests for the components of the algorithm.
+
 The `cmm-s2/experiments` folder contains numerical experiments seen in the paper 
 
 Standard dependencies come from the `numpy` and `scipy` packages. Specific dependencies used in the implemenation include:
