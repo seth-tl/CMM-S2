@@ -20,7 +20,6 @@ def source(phi,theta, l = 30):
     # rhs of \Delta u = f
     return l*(l+1)*np.sin(theta)**l*np.cos(l*phi) + (l+1)*(l+2)*np.cos(theta)*np.cos(l*phi)*np.sin(theta)**l
 
-
 def solution(phi, theta, l = 30):
     # coordinate conventions are different for this function
     # in scipy, theta = azimuthal, phi = polar
