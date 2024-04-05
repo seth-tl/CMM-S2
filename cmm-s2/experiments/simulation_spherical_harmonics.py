@@ -22,6 +22,8 @@ n_maps = 20
 save_steps = 5
 
 
+path_to_data = ''
+
 # # to generate the initial vorticity:
 # np.random.seed(42) # why 42?
 # coeffs = np.random.uniform(-5,5, 20**2)
@@ -49,12 +51,12 @@ save_steps = 5
 # # save this for future use:
 # pickle.dump(vorticity, open('./data/intial_vorticity_sph_harm_simulation.txt', "wb"))
 
-vorticity = pickle.load(open('/mnt/c/Users/setht/Research/GitHub_Repos/CMM-S2/data/intial_vorticity_sph_harm_simulation.txt','rb'))
+vorticity = pickle.load(open(path_to_data + '/data/intial_vorticity_sph_harm_simulation.txt','rb'))
 
 # run the simulation -----------------------------------------------------------------
 
 # load pre-computed mesh
-mesh = pickle.load(open('/mnt/c/Users/setht/Research/GitHub_Repos/CMM-S2/cmm-s2/data/icosahedral_mesh_ref_%s.txt' %k, "rb"))
+mesh = pickle.load(open(path_to_data + '/data/icosahedral_mesh_ref_%s.txt' %k, "rb"))
 
 # run and time the simulation:
 start, start_clock = time.perf_counter(), time.process_time()

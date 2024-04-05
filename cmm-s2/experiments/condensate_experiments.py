@@ -24,8 +24,10 @@ file_name = './data/condensate_experiment_rotating'
 
 # run the simulation -----------------------------------------------------------------
 
+path_to_data = ''
+
 # load pre-computed mesh
-mesh = pickle.load(open('/mnt/c/Users/setht/Research/GitHub_Repos/CMM-S2/cmm-s2/data/icosahedral_mesh_ref_%s.txt' %k, "rb"))
+mesh = pickle.load(open(path_to_data + 'data/icosahedral_mesh_ref_%s.txt' %k, "rb"))
 
 # run and time the simulation:
 start, start_clock = time.perf_counter(), time.process_time()
