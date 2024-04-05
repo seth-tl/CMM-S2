@@ -4,6 +4,7 @@ An assortment of utility functions
 """
 #/---
 import numpy as np
+import pdb
 
 def sphere2cart(phi, theta):
     x = np.sin(theta)*np.cos(phi)
@@ -57,13 +58,25 @@ def det_vec(A):
 def bary_coords(v_1,v_2,v_3,v):
     """
     v1, v2, v3 define vertices of the containing triangle
-    order counter-clockwise. v is the query point.
+    order counter-clockwise. v is the transformed point.
     """
     denom = det_vec([v_1, v_2, v_3])
-    bcc_outs = np.array([det_vec([v, v_2, v_3])/denom,
+    bcc_outs = np.stack([det_vec([v, v_2, v_3])/denom,
                          det_vec([v_1,v,v_3])/denom,
-                         det_vec([v_1, v_2, v])/denom])
-    return bcc_outs.T
+                         det_vec([v_1, v_2, v])/denom], axis = 1)
+    return bcc_outs
+
+def bary_coords_alt(vs, v, outs):
+    """
+    vs define vertices of the containing triangle
+    order counter-clockwise. v is the transformed point.
+    """
+    denom = np.linalg.det(vs)
+    outs[:,0]  = np.linalg.det(np.stack([v, vs[:,1,:], vs[:,2,:]], axis = 2))/denom
+    outs[:,1]  = np.linalg.det(np.stack([vs[:,0,:],v, vs[:,2,:]], axis = 2))/denom
+    outs[:,2]  = np.linalg.det(np.stack([vs[:,0,:], vs[:,1,:],v], axis = 2))/denom
+
+    return outs
 
 def identity(xyz):
     return [xyz[0], xyz[1], xyz[2]]

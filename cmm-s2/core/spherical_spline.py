@@ -13,337 +13,196 @@ from . import utils
 import warnings
 warnings.filterwarnings("ignore", category=np.VisibleDeprecationWarning)
 #===============================================================================
-
-
-# Basic scalar field interpolation classes =========================
+# ==================================================================
+# Spherical diffeomorphism interpolation classes:
 
 class spherical_spline(object):
 
     """
-    Basic class for spherical spline interpolation for a scalar function
-    on sphere.
-
-    TODO: Implement further approximation spaces: CT-split, quintic, etc..
+    Basic class for spherical spline interpolation of a function on the sphere using 
+    the approximation space S^1_2(T_{PS})
 
     inputs:
         mesh: spherical_triangulation object from mesh_functions.py
-        vals: (N,3) np.array of values of each component at mesh.points()
-        grad_vals: gradient of each component at grid.points()
+        vals: (4,N) array defining the jet (f, Df) at the grid points
+        coeffs: (19,N) array defining the pre-allocated array of coefficients 
     """
 
-    def __init__(self, mesh, vals, grad_vals, ps_split = None):
+    def __init__(self, mesh, vals, coeffs):
 
         self.mesh = mesh
         self.vals = vals
-        self.grad_vals = grad_vals
+
         # precompute all the coefficients defining the interpolant
-        if ps_split == None:
-            self.coefficients(mesh.ps_split_mesh())
-        else:
-            self.coefficients(ps_split)
+        self.coeffs = self.assemble_coefficients(coeffs)
+        self.vort = False
         return
 
-    def __call__(self, q_pts):
-        # evaluate the interpolant at the points defined by q_pts
 
-        # query the triangulation
+    def __call__(self, phi,the):
+       
+       # to be incorporatedn with the barotropic vorticity solver: 
+        ss = np.shape(phi)
+        q_pts = np.array(utils.sphere2cart(phi.reshape([ss[0]*ss[1]]),the.reshape(ss[0]*ss[1]))).T
+        # compute barycentric coordinates and containing triangle
         bcc, trangs, v_pts = self.mesh.query(q_pts)
-
-        # compute the corresponding containing split triangle
+        # # additional operation to find split triangle
         bb = bary_minmax(bcc)
-        nCs = np.stack(Cs[bb[:,0], bb[:,1]], axis = 0)
+        nCs = Cs[bb[0], bb[1]]
 
-        # define new vertex points based on split triangle
-        v_pts_n = new_vpoints(v_pts, bb)
+        # vertices of split triangle
+        v_pts_n = new_vpoints(v_pts, bb) # TODO: get rid of this operation
+        # get appropriate coefficients and recompute barycentric coordinates
+        cfs =  self.coeffs[:,trangs]
 
-        #obtain coefficients
-        cfs = np.array(self.coeffs)[:,trangs]
+        bcc_n = utils.bary_coords(v_pts_n[:,0,:], v_pts_n[:,1,:], v_pts_n[:,2,:], q_pts)
+        # evaluate the quadratic Berstein-Bezier polynomial in each split triangle
+        inds = range(len(nCs))
 
-        #evaluation functions for PS-split
-        out = ps_split_eval(v_pts_n, nCs = nCs, q_pts = q_pts.T, coeffs = cfs)
+        outs = (bcc_n[:,0]**2)*cfs[nCs[:,0], inds] + \
+               (bcc_n[:,1]**2)*cfs[nCs[:,1], inds] + \
+               (bcc_n[:,2]**2)*cfs[nCs[:,2], inds] + \
+             2*(bcc_n[:,1]*bcc_n[:,0])*cfs[nCs[:,3], inds] +\
+             2*(bcc_n[:,2]*bcc_n[:,1])*cfs[nCs[:,4], inds] +\
+             2*(bcc_n[:,2]*bcc_n[:,0])*cfs[nCs[:,5], inds]
+        
 
-        return out
+        return outs.reshape([ss[0], ss[1]])
 
-    def coefficients(self, ps_split_mesh):
-        inds = np.array(self.mesh.simplices)
-        v_pts = self.mesh.vertices[inds]
-
-        #obtain function values at vertices
-        c123 = self.vals[inds]
-
-        # arrange for gradient values at the vertices
-        grad_f1 = np.array([self.grad_vals[0][inds[:,0]], self.grad_vals[1][inds[:,0]], self.grad_vals[2][inds[:,0]]])
-        grad_f2 = np.array([self.grad_vals[0][inds[:,1]], self.grad_vals[1][inds[:,1]], self.grad_vals[2][inds[:,1]]])
-        grad_f3 = np.array([self.grad_vals[0][inds[:,2]], self.grad_vals[1][inds[:,2]], self.grad_vals[2][inds[:,2]]])
-        gradient_f = [grad_f1, grad_f2, grad_f3]
-
-
-        self.coeffs = PS_split_coeffs(verts = v_pts, Hs = ps_split_mesh[0],
-                                      Gs = ps_split_mesh[1], Es = ps_split_mesh[2],
-                                      c123 =  c123, grad_f = gradient_f)
-        return
 
     def gradient(self, q_pts):
-        # evaluate the gradient of the interpolant
-
-        # query the triangulation
+        # Computes the differential of a map D\varphi_x : T_x M ---> T_{\varphi(x)}M
+        # x = q_pts, varphi(x) = eval_pts
+        
         bcc, trangs, v_pts = self.mesh.query(q_pts)
 
-        # compute the corresponding containing split triangle
+        # # additional operation to find split triangle
         bb = bary_minmax(bcc)
-        nCs = np.stack(Cs[bb[:,0], bb[:,1]], axis = 0)
+        nCs = Cs[bb[0], bb[1]]
 
-        # define new vertex points based on split triangle
-        v_pts_n = new_vpoints(v_pts, bb)
+        # vertices of split triangle
+        v_pts_n = new_vpoints(v_pts, bb) # TODO: get rid of this operation
 
-        #obtain coefficients
-        coeffs = np.array(self.coeffs)[:,trangs]
+        # get appropriate coefficients and recompute barycentric coordinates
+        cfs =  self.coeffs[:,trangs]
 
-        Cfs = [cffs[cc] for cffs,cc in zip(coeffs.T, nCs)]
-        Cfs = np.array(Cfs)
-        # compute values for the computation of the gradient of a HBB polynomial
         unos = np.ones([len(v_pts_n[:,0,0]),3])
         xs = (unos*np.array([1,0,0]))
         ys = (unos*np.array([0,1,0]))
         zs = (unos*np.array([0,0,1]))
 
-        bcc_n = utils.bary_coords(v_pts_n[:,0,:], v_pts_n[:,1,:], v_pts_n[:,2,:], q_pts.T)
-
+        bcc_n = utils.bary_coords(v_pts_n[:,0,:], v_pts_n[:,1,:], v_pts_n[:,2,:], q_pts)
         bcc_x = utils.bary_coords(v_pts_n[:,0,:], v_pts_n[:,1,:], v_pts_n[:,2,:], xs)
         bcc_y = utils.bary_coords(v_pts_n[:,0,:], v_pts_n[:,1,:], v_pts_n[:,2,:], ys)
         bcc_z = utils.bary_coords(v_pts_n[:,0,:], v_pts_n[:,1,:], v_pts_n[:,2,:], zs)
-        Bs = [bcc_x, bcc_y, bcc_z]
 
-        outs = grad_HBB(Cfs, bcc_n, Bs)
+        inds = range(len(nCs))
 
-        return utils.d_Proj(q_pts, outs)
+        dp_b1 = 2*cfs[nCs[:,0], inds]*bcc_n[:,0] + 2*cfs[nCs[:,3], inds]*bcc_n[:,1] + 2*cfs[nCs[:,5], inds]*bcc_n[:,2]
+
+        dp_b2 = 2*cfs[nCs[:,1], inds]*bcc_n[:,1] + 2*cfs[nCs[:,3], inds]*bcc_n[:,0] + 2*cfs[nCs[:,4], inds]*bcc_n[:,2]
+
+        dp_b3 = 2*cfs[nCs[:,2], inds]*bcc_n[:,2] + 2*cfs[nCs[:,4], inds]*bcc_n[:,1] + 2*cfs[nCs[:,5], inds]*bcc_n[:,0]
+
+        outx = bcc_x[:,0]*dp_b1 +  bcc_x[:,1]*dp_b2 + bcc_x[:,2]*dp_b3
+        outy = bcc_y[:,0]*dp_b1 +  bcc_y[:,1]*dp_b2 + bcc_y[:,2]*dp_b3
+        outz = bcc_z[:,0]*dp_b1 +  bcc_z[:,1]*dp_b2 + bcc_z[:,2]*dp_b3
+
+        return d_Proj(q_pts, [outx, outy, outz])
 
 
 
-class spline_interp_structured(object):
-
-
-    def __init__(self, grid, simplices, msimplices, phi, theta, vals, grad_vals):
-
-        self.grid = grid
-        # self.simplices = self.grid.simplices
-        self.simplices = simplices
-        self.msimplices = msimplices
-        self.points = grid.points
-        self.vals = vals
-        self.grad_vals = grad_vals
-        self.phi = phi.copy()
-        self.theta = theta.copy()
-        
-        self.coeffs = self.assemble_coefficients(inds = np.array(self.simplices),
-                                                points = self.points,
-                                                vals = self.vals,
-                                                grad_vals = self.grad_vals)
-        return
-
-    def __call__(self, q_pts):
-        return self.eval(q_pts)
-    
-    def eval(self, q_pts):
-        bcc, trangs, v_pts = self.query(q_pts)
-        bb = bary_minmax(bcc)
-        nCs = np.stack(Cs[bb[:,0], bb[:,1]], axis = 0)
-
-        v_pts_n = new_vpoints(v_pts, bb)
-        cfs = np.array(self.coeffs)[:,trangs]
-
-        outs = ps_split_eval(v_pts_n, nCs = nCs, q_pts = q_pts.T, coeffs = cfs)
-
-        return np.array([outs])
-
-    def query(self, q_pts):
-        [phi,theta] = utils.cart2sphere(q_pts)
-        ijs = self.inds(phi,theta)
-        return self.containing_simplex_and_bcc_structured(ijs, q_pts.T)
-
-    def assemble_coefficients(self, inds, points, vals, grad_vals):
+    def assemble_coefficients(self, coeffs):
         """
-        Void function to assemble all the coefficients to perform the PS split
-        interpolation
+        assemble all the coefficients to perform the PS split interpolation.
         """
-        #inds = np.array(self.simplices)
-        # All values that don't need to be recomputed:
-        v_pts = points[inds]
-        v1r, v2r, v3r = v_pts[:,0,:].copy(), v_pts[:,1,:].copy(), v_pts[:,2,:].copy()
-        v4r = utils.div_norm((v1r + v2r + v3r)/3).T
-        e1r, e2r, e3r = utils.div_norm(v1r/2+v2r/2).T, utils.div_norm(v2r/2+v3r/2).T, utils.div_norm(v3r/2 + v1r/2).T
-        # Calculate barycentric coords of the edges
-        # h12r, h21r, h23r, h32r, h13r, h31r = h(e1r,v1r).T, h(e1r,v2r).T, h(e2r,v2r).T, h(e2r,v3r).T, h(e3r,v1r).T, h(e3r,v3r).T
-        #tangential projection
-        h12r, h21r, h23r = meshes.sphere_tan_proj(v2r-v1r,v1r).T, meshes.sphere_tan_proj(v1r-v2r,v2r).T, meshes.sphere_tan_proj(v3r-v2r,v2r).T
-        h32r, h13r, h31r = meshes.sphere_tan_proj(v2r-v3r,v3r).T, meshes.sphere_tan_proj(v3r-v1r,v1r).T, meshes.sphere_tan_proj(v1r-v3r,v3r).T
-        h41, h42, h43 = meshes.sphere_tan_proj(v4r-v1r,v1r).T, meshes.sphere_tan_proj(v4r-v2r,v2r).T, meshes.sphere_tan_proj(v4r-v3r,v3r).T
+        # void function replaces the coefficients of the array:
 
-        g12r, g21r = utils.bary_coords(v1r,e1r,v4r,h12r), utils.bary_coords(v2r,v4r,e1r,h21r)
-        g23r, g32r = utils.bary_coords(v2r,e2r,v4r,h23r), utils.bary_coords(v3r,v4r,e2r,h32r)
-        g13r, g31r = utils.bary_coords(v1r,v4r,e3r,h13r), utils.bary_coords(v3r,e3r,v4r,h31r)
+        tri_vals = self.vals[:,np.array(self.mesh.simplices)]
+        ps_split = self.mesh.ps_split
 
-        g14r = utils.bary_coords(v1r,v4r,e3r,meshes.sphere_tan_proj(v4r,v1r).T)
-        g24r = utils.bary_coords(v2r,v4r,e1r,meshes.sphere_tan_proj(v4r,v2r).T)
-        g34r = utils.bary_coords(v3r,v4r,e2r,meshes.sphere_tan_proj(v4r,v3r).T)
 
-        Ar = utils.bary_coords(v1r,v2r,v3r,v4r)
+        coeffs[0,:] =  tri_vals[0,:,0] 
+        coeffs[1,:] =  tri_vals[0,:,1]
+        coeffs[2,:] =  tri_vals[0,:,2]
 
-        #assemble into nice lists
-        verts = [v1r,v2r,v3r,v4r]
-        Hs = [h12r.T, h21r.T, h23r.T, h32r.T, h13r.T, h31r.T, h41.T, h42.T, h43.T]
-        Gs = [g12r, g21r, g23r, g32r, g13r, g31r, g14r, g24r, g34r, Ar]
-        g_1r, g_2r, g_3r = utils.bary_coords(v1r,v2r,v3r,e1r), utils.bary_coords(v1r,v2r,v3r,e2r), utils.bary_coords(v1r,v2r,v3r,e3r)
-        gs = [g_1r, g_2r, g_3r]
+        coeffs[3,:] = (1/ps_split[1][0][:,1])*(utils.dot(ps_split[0][0], tri_vals[1::,:,0])/2 - (ps_split[1][0][:,0])*tri_vals[0,:,0])
+        coeffs[4,:] = (1/ps_split[1][6][:,1])*(utils.dot(ps_split[0][6], tri_vals[1::,:,0])/2 - (ps_split[1][6][:,0])*tri_vals[0,:,0])
+        coeffs[5,:] = (1/ps_split[1][4][:,2])*(utils.dot(ps_split[0][4], tri_vals[1::,:,0])/2 - (ps_split[1][4][:,0])*tri_vals[0,:,0])
 
-        # now the non-recyclable quantities
-        #in x--------
-        grad_f1 = np.array([grad_vals[0][inds[:,0]], grad_vals[1][inds[:,0]], grad_vals[2][inds[:,0]]])
-        grad_f2 = np.array([grad_vals[0][inds[:,1]], grad_vals[1][inds[:,1]], grad_vals[2][inds[:,1]]])
-        grad_f3 = np.array([grad_vals[0][inds[:,2]], grad_vals[1][inds[:,2]], grad_vals[2][inds[:,2]]])
-        grad_f = [grad_f1, grad_f2, grad_f3]
-        c123 = vals[inds]
-        coeffs = PS_split_coeffs(verts = verts, Hs = Hs, Gs = Gs, Es = gs,
-                                        c123 =  c123, grad_f = grad_f)
+        coeffs[6,:] = (1/ps_split[1][2][:,1])*(utils.dot(ps_split[0][2], tri_vals[1::,:,1])/2 - (ps_split[1][2][:,0])*tri_vals[0,:,1])
+        coeffs[7,:] = (1/ps_split[1][7][:,1])*(utils.dot(ps_split[0][7], tri_vals[1::,:,1])/2 - (ps_split[1][7][:,0])*tri_vals[0,:,1])
+        coeffs[8,:] = (1/ps_split[1][1][:,2])*(utils.dot(ps_split[0][1], tri_vals[1::,:,1])/2 - (ps_split[1][1][:,0])*tri_vals[0,:,1])
 
+        coeffs[9,:] = (1/ps_split[1][5][:,1])*(utils.dot(ps_split[0][5], tri_vals[1::,:,2])/2 - (ps_split[1][5][:,0])*tri_vals[0,:,2])
+        coeffs[10,:] = (1/ps_split[1][8][:,1])*(utils.dot(ps_split[0][8], tri_vals[1::,:,2])/2 - (ps_split[1][8][:,0])*tri_vals[0,:,2])
+        coeffs[11,:] = (1/ps_split[1][3][:,2])*(utils.dot(ps_split[0][3], tri_vals[1::,:,2])/2 - (ps_split[1][3][:,0])*tri_vals[0,:,2])
+
+
+        coeffs[12,:] = (ps_split[2][0][:,0])*coeffs[3,:] + (ps_split[2][0][:,1])*coeffs[8,:]
+        coeffs[13,:] = (ps_split[2][1][:,1])*coeffs[6,:] + (ps_split[2][1][:,2])*coeffs[11,:]
+        coeffs[14,:] = (ps_split[2][2][:,2])*coeffs[9,:] + (ps_split[2][2][:,0])*coeffs[5,:]
+        coeffs[15,:] = (ps_split[2][0][:,0])*coeffs[4,:] + (ps_split[2][0][:,1])*coeffs[7,:]
+        coeffs[16,:] = (ps_split[2][1][:,1])*coeffs[7,:] + (ps_split[2][1][:,2])*coeffs[10,:]
+        coeffs[17,:] = (ps_split[2][2][:,0])*coeffs[4,:] + (ps_split[2][2][:,2])*coeffs[10,:]
+
+        #barycentre coords of middle points:
+        coeffs[18,:] = (ps_split[1][9][:,0])*coeffs[4,:] + (ps_split[1][9][:,1])*coeffs[7,:] + (ps_split[1][9][:,2])*coeffs[10,:]
 
         return coeffs
 
 
-    def containing_simplex_and_bcc_structured(self, inds, pts):
-        #obtain indices of which half of quadralateral
-        phi0, theta0 = self.phi[inds[0]], self.theta[inds[1]]
-        v_0 = utils.sphere2cart(phi0, theta0)
-
-        # For the endpoint:
-        ijsp1 = [inds[0].copy() + 1, inds[1].copy() + 1]
-        ijsp1[0] = ijsp1[0] % (len(self.phi))
-
-        phi_p1, theta_p1 = self.phi[ijsp1[0]], self.theta[ijsp1[1]]
-
-        v_1 = np.array(utils.sphere2cart(phi_p1, theta_p1))
-
-        n_vs = utils.cross(v_0, v_1)
-        s_inds = np.heaviside(-utils.dot(n_vs, pts.T), 0).astype(int)
-        # s_inds = np.heaviside(-det([v_0, v_1, pts.T]),1).astype(int)
-    #       the indices swap since the lambda moves across columns,
-    #       whereas theta increases along the rows
-        tri_out_temp = self.msimplices[inds[1], inds[0], :] #.reshape([len(pts),2])
-        # now assemble triangle list
-        l = np.shape(tri_out_temp)[0]
-        tri_out = np.array(list(tri_out_temp[np.arange(0,l),s_inds]))
-        trangs = tri_out[:,3]
-        verts = self.points[tri_out[:,0:3]]
-
-        bcc = utils.bary_coords(verts[:,0,:], verts[:,1,:], verts[:,2,:], pts)
-
-        return bcc, trangs, verts
-
-    def inds(self, phiq, thetaq):
-        """
-        input a value (phi,theta) to interpolate
-        phi0, theta0 should be meshgrids with the same amount of points and
-        square.
-
-        phi_s0, theta_s0: Numpy array of 4 meshgrids of the stencils points
-        each grid represents one of the four corners.
-
-        output: list of indices, base points of position in the cell also
-        position of the stencil point relative to the cell
-        """
-
-        dphi = abs(self.phi[1]-self.phi[0])
-        dthe = abs(self.theta[1]-self.theta[0])
-        #Properly account for values outside of the interval
-        phiq_n = phiq % (2*np.pi)
-        phi_l = ((phiq_n-self.phi[0])//dphi).astype(int) % (len(self.phi))
-        #don't mod this direction, just correct for boundary
-        theta_l = ((thetaq-self.theta[0])//dthe).astype(int)
-
-        theta_l[theta_l == (len(self.theta)-1)] = len(self.theta)-2
-        # #also compute position within the cell
-        phi_c = (phiq_n-self.phi[phi_l])/dphi
-        theta_c = (thetaq-self.theta[theta_l])/dthe
-
-        #need added check if query lands on theta_c = 0 or 1 lines.
-        #this is a tunable range and only pertains to the interior points
-        # TODO: make this less ad hoc
-        inds0 = np.where((theta_c <= 0.03) & (theta_l != 0))
-        inds1 = np.where((theta_c > 0.85) & (theta_l !=  len(self.theta)-2))
-
-        phi_p1 = (phi_l + 1) % (len(self.phi))
-        the_p1 = theta_l + 1
-
-        #in or outside triangle for theta_c = 0.
-        v_0 = np.array(utils.sphere2cart(self.phi[phi_l[inds0]], self.theta[theta_l[inds0]]))
-        v_1 = np.array(utils.sphere2cart(self.phi[phi_p1[inds0]], self.theta[theta_l[inds0]]))
-
-        n_vs = utils.cross(v_0, v_1)
-        q_pts0 = np.array(utils.sphere2cart(phiq_n[inds0], thetaq[inds0]))
-        s_inds0 = np.heaviside(utils.dot(n_vs, q_pts0), 0).astype(int)
-        # pdb.set_trace()
-        theta_l[inds0] = theta_l[inds0]-s_inds0
-        #in or outside triangle for theta_c = 0.
-        v_01 = np.array(utils.sphere2cart(self.phi[phi_l[inds1]], self.theta[the_p1[inds1]]))
-        v_11 = np.array(utils.sphere2cart(self.phi[phi_p1[inds1]], self.theta[the_p1[inds1]]))
-
-        n_vs2 = utils.cross(v_01, v_11)
-        q_pts1 = np.array(utils.sphere2cart(phiq_n[inds1], thetaq[inds1]))
-
-        s_inds1 = np.heaviside(-utils.dot(n_vs2, q_pts1), 0).astype(int)
-
-        theta_l[inds1] = theta_l[inds1] + s_inds1
-
-        return [phi_l, theta_l] #, [phi_c, theta_c]
-
-
-# ==================================================================
-
-# Spherical diffeomorphism interpolation classes
-
 class sphere_diffeomorphism(object):
 
     """
-    Basic class for spherical spline interpolation for a mapping of the sphere.
-    Current implementation only uses the Powell-Sabin interpolation.
-
-    # TODO: incorporate multi-scale funtionality, different interpolation spaces
+    Basic class for spherical spline interpolation defining a diffeomorphism of the sphere.
+    Interpolation is defined by the Powell-Sabin split.
 
     inputs:
         mesh: spherical_triangulation object from mesh_functions.py
-        vals: (N,3) np.array of values of each component at mesh.points()
-        grad_vals: gradient of each component at grid.points()
+        vals: (3,4,N) array defining the jet (\phi, D\varphi) at the grid points
+        coeffs: (3,19,N) array defining the pre-allocated array of coefficients 
     """
 
-    def __init__(self, mesh, vals, grad_vals, ps_split = None):
+    def __init__(self, mesh, vals, coeffs):
 
         self.mesh = mesh
         self.vals = vals
-        self.grad_vals = grad_vals
+
         # precompute all the coefficients defining the interpolant
-        if ps_split == None:
-            self.coeffs_x, self.coeffs_y, self.coeffs_z = self.assemble_coefficients(mesh.ps_split())
-        else:
-            self.coeffs_x, self.coeffs_y, self.coeffs_z = self.assemble_coefficients(ps_split)
+        self.coeffs = self.assemble_coefficients(coeffs)
 
         return
 
 
     def __call__(self, q_pts):
-
-        bcc, trangs, v_pts = self.mesh.query(q_pts)
-        bb = bary_minmax(bcc)
-        nCs = np.stack(Cs[bb[:,0], bb[:,1]], axis = 0)
-
-        v_pts_n = new_vpoints(v_pts, bb)
-        cfs_x, cfs_y, cfs_z = np.array(self.coeffs_x)[:,trangs], np.array(self.coeffs_y)[:,trangs], np.array(self.coeffs_z)[:,trangs]
         
-        out_x = ps_split_eval(v_pts_n, nCs = nCs, q_pts = q_pts.T, coeffs = cfs_x)
-        out_y = ps_split_eval(v_pts_n, nCs = nCs, q_pts = q_pts.T, coeffs = cfs_y)
-        out_z = ps_split_eval(v_pts_n, nCs = nCs, q_pts = q_pts.T, coeffs = cfs_z)
+        # compute barycentric coordinates and containing triangle
+        bcc, trangs, v_pts = self.mesh.query(q_pts)
+ 
+        # # additional operation to find split triangle
+        bb = bary_minmax(bcc)
+        nCs = Cs[bb[0], bb[1]]
 
-        norm = np.sqrt(out_x**2 + out_y**2 + out_z**2)
-        return np.array([out_x/norm, out_y/norm, out_z/norm])
+        # vertices of split triangle
+        v_pts_n = new_vpoints(v_pts, bb) # TODO: get rid of this operation
+
+        # get appropriate coefficients and recompute barycentric coordinates
+        cfs =  self.coeffs[:,:,trangs]
+        bcc_n = utils.bary_coords(v_pts_n[:,0,:], v_pts_n[:,1,:], v_pts_n[:,2,:], q_pts)
+        # evaluate the quadratic Berstein-Bezier polynomial in each split triangle
+        inds = range(len(nCs))
+
+        outs = (bcc_n[:,0]**2)[None,:]*cfs[:,nCs[:,0], inds] + \
+               (bcc_n[:,1]**2)[None,:]*cfs[:,nCs[:,1], inds] + \
+               (bcc_n[:,2]**2)[None,:]*cfs[:,nCs[:,2], inds] + \
+             2*(bcc_n[:,1]*bcc_n[:,0])[None,:]*cfs[:,nCs[:,3], inds] +\
+             2*(bcc_n[:,2]*bcc_n[:,1])[None,:]*cfs[:,nCs[:,4], inds] +\
+             2*(bcc_n[:,2]*bcc_n[:,0])[None,:]*cfs[:,nCs[:,5], inds]
+        
+        norm = np.sqrt(outs[0,:]**2 + outs[1,:]**2 + outs[2,:]**2)
+
+        return (1/norm)[None,:]*outs
 
 
     def eval_grad(self, q_pts, eval_pts):
@@ -411,105 +270,71 @@ class sphere_diffeomorphism(object):
         # reduces the computational cost of querying at the expense of
         # performing a small extrapolation for the stencil points
 
-        bcc, trangs, v_pts = self.mesh.query(q_pts)
-        b_maxmin = bary_minmax(bcc)
+        bcc, trangs, v_pts = self.mesh.query(q_pts.T)
+        bmm = bary_minmax(bcc)
 
-        v_pts_n = new_vpoints(v_pts, b_maxmin)
-        cfs_x = np.array(self.coeffs_x)[:,trangs]
-        cfs_y = np.array(self.coeffs_y)[:,trangs]
-        cfs_z = np.array(self.coeffs_z)[:,trangs]
-        # in (x,y,z)
-        # TODO: vectorize this operation?
-        s_x = eval_stencils(v_pts_n, bmm = b_maxmin, st_pts = st_pts, coeffs = cfs_x)
-        s_y = eval_stencils(v_pts_n, bmm = b_maxmin, st_pts = st_pts, coeffs = cfs_y)
-        s_z = eval_stencils(v_pts_n, bmm = b_maxmin, st_pts = st_pts, coeffs = cfs_z)
+        v_pts_n = new_vpoints(v_pts, bmm) # TODO: get rid of this operation
+        cfs = self.coeffs[:,:,trangs]
 
-        return np.array([s_x, s_y, s_z])
+        nCs = Cs[bmm[0], bmm[1]]
 
+        inds = range(len(nCs))
+        st_pts_n = st_pts[:]
 
-    def assemble_coefficients(self, ps_split):
+        for i in range(4):
+
+            bcc_n = utils.bary_coords(v_pts_n[:,0,:], v_pts_n[:,1,:], v_pts_n[:,2,:], st_pts[:,i,:].T)
+
+            # evaluate the quadratic Berstein-Bezier polynomial in each split trianglea
+            outs = (bcc_n[:,0]**2)[None,:]*cfs[:,nCs[:,0], inds] + \
+                (bcc_n[:,1]**2)[None,:]*cfs[:,nCs[:,1], inds] + \
+                (bcc_n[:,2]**2)[None,:]*cfs[:,nCs[:,2], inds] + \
+                2*(bcc_n[:,1]*bcc_n[:,0])[None,:]*cfs[:,nCs[:,3], inds] +\
+                2*(bcc_n[:,2]*bcc_n[:,1])[None,:]*cfs[:,nCs[:,4], inds] +\
+                2*(bcc_n[:,2]*bcc_n[:,0])[None,:]*cfs[:,nCs[:,5], inds]
+
+            st_pts_n[:,i,:] = outs
+
+        return st_pts_n
+
+    def assemble_coefficients(self, coeffs):
         """
-        Void function to assemble all the coefficients to perform the PS split
-        interpolation.
-
-        TODO: vectorize this operation
+        assemble all the coefficients to perform the PS split interpolation.
         """
-        inds = np.array(self.mesh.simplices)
-        v_pts = self.mesh.vertices[inds]
+        # void function replaces the coefficients of the array:
 
-        grad_f1 = np.array([self.grad_vals[0][0,:][inds[:,0]], self.grad_vals[0][1,:][inds[:,0]], self.grad_vals[0][2,:][inds[:,0]]])
-        grad_f2 = np.array([self.grad_vals[0][0,:][inds[:,1]], self.grad_vals[0][1,:][inds[:,1]], self.grad_vals[0][2,:][inds[:,1]]])
-        grad_f3 = np.array([self.grad_vals[0][0,:][inds[:,2]], self.grad_vals[0][1,:][inds[:,2]], self.grad_vals[0][2,:][inds[:,2]]])
-        grad_fx = [grad_f1, grad_f2, grad_f3]
-        c123x = self.vals[0][inds]
-        coeffs_x = PS_split_coeffs(verts = v_pts, Hs = ps_split[0], Gs = ps_split[1],
-                                    Es = ps_split[2], c123 =  c123x, grad_f = grad_fx)
-
-        grad_f1y = np.array([self.grad_vals[1][0,:][inds[:,0]], self.grad_vals[1][1,:][inds[:,0]], self.grad_vals[1][2,:][inds[:,0]]])
-        grad_f2y = np.array([self.grad_vals[1][0,:][inds[:,1]], self.grad_vals[1][1,:][inds[:,1]], self.grad_vals[1][2,:][inds[:,1]]])
-        grad_f3y = np.array([self.grad_vals[1][0,:][inds[:,2]], self.grad_vals[1][1,:][inds[:,2]], self.grad_vals[1][2,:][inds[:,2]]])
-        grad_fy = [grad_f1y, grad_f2y, grad_f3y]
-        c123y = self.vals[1][inds]
-
-        coeffs_y = PS_split_coeffs(verts = v_pts, Hs = ps_split[0], Gs = ps_split[1],
-                                    Es = ps_split[2], c123 =  c123y, grad_f = grad_fy)
-
-        grad_f1z = np.array([self.grad_vals[2][0,:][inds[:,0]], self.grad_vals[2][1,:][inds[:,0]], self.grad_vals[2][2,:][inds[:,0]]])
-        grad_f2z = np.array([self.grad_vals[2][0,:][inds[:,1]], self.grad_vals[2][1,:][inds[:,1]], self.grad_vals[2][2,:][inds[:,1]]])
-        grad_f3z = np.array([self.grad_vals[2][0,:][inds[:,2]], self.grad_vals[2][1,:][inds[:,2]], self.grad_vals[2][2,:][inds[:,2]]])
-        grad_fz = [grad_f1z, grad_f2z, grad_f3z]
-        c123z = self.vals[2][inds]
-        coeffs_z = PS_split_coeffs(verts = v_pts, Hs = ps_split[0], Gs = ps_split[1],
-                                    Es = ps_split[2], c123 =  c123z, grad_f = grad_fz)
-        
-        return coeffs_x, coeffs_y, coeffs_z
-
-    def det_jac(self, q_pts):
-        # Jacobian determinant calculation on the sphere using stereographic coordinates:
-    
-        # first compute the gradient:
-        map_pts = self(q_pts)
-        grad_map_n = self.eval_grad(q_pts, map_pts)
-        # this more ad-hoc approach which I don't like:
-    
-        # # then form a matrix representation of the grad_map
-        # # w.r.t. orthonormal bases of each tangent space.
-
-        # # #first for T_p S^2
-        # # #separate everything away from the poles
-        inds0 = np.where(np.absolute(utils.dot(q_pts, [0,1,0])) >= (1-1e-5))[0]
-        a1 = np.array(utils.cross(q_pts,[0,1,0]))
-        a2 = np.array(utils.cross(q_pts, a1))
-        #replace first and last rows
-        a1[:,inds0] = utils.cross(q_pts[:,inds0], [0,0,1])
-        a2[:,inds0] = utils.cross(q_pts[:,inds0], a1[:,inds0])
-
-        #normalize the direction vectors
-        a1_n, a2_n = utils.div_norm(a1.T), utils.div_norm(a2.T)
-
-        # then for T_{\alpha} S^2
-        inds0_a = np.where(np.absolute(utils.dot(map_pts, [0,1,0])) >= (1-1e-5))[0]
-        a1_a = np.array(utils.cross(map_pts,[0,1,0]))
-        a2_a = np.array(utils.cross(map_pts, a1_a))
-        #replace first and last rows
-        a1_a[:,inds0_a] = utils.cross(map_pts[:,inds0_a], [0,0,1])
-        a2_a[:,inds0_a] = utils.cross(map_pts[:,inds0_a], a1_a[:,inds0_a])
-
-        #normalize the direction vectors
-        a1_a_n, a2_a_n = utils.div_norm(a1_a.T), utils.div_norm(a2_a.T)
+        tri_vals = self.vals[:,:,np.array(self.mesh.simplices)]
+        ps_split = self.mesh.ps_split
 
 
-        #change bases and compute determinant
-        out1_temp = utils.mat_mul(grad_map_n, a1_n)
-        out2_temp = utils.mat_mul(grad_map_n, a2_n)
+        coeffs[:,0,:] =  tri_vals[:,0,:,0] 
+        coeffs[:,1,:] =  tri_vals[:,0,:,1]
+        coeffs[:,2,:] =  tri_vals[:,0,:,2]
 
-        out11 = utils.dot(a1_a_n, out1_temp)
-        out12 = utils.dot(a2_a_n, out1_temp)
-        out21 = utils.dot(a1_a_n, out2_temp)
-        out22 = utils.dot(a2_a_n, out2_temp)
+        coeffs[:,3,:] = (1/ps_split[1][0][:,1])[None,:]*(utils.dot(ps_split[0][0], tri_vals[:,1::,:,0])/2 - (ps_split[1][0][:,0])[None,:]*tri_vals[:,0,:,0])
+        coeffs[:,4,:] = (1/ps_split[1][6][:,1])[None,:]*(utils.dot(ps_split[0][6], tri_vals[:,1::,:,0])/2 - (ps_split[1][6][:,0])[None,:]*tri_vals[:,0,:,0])
+        coeffs[:,5,:] = (1/ps_split[1][4][:,2])[None,:]*(utils.dot(ps_split[0][4], tri_vals[:,1::,:,0])/2 - (ps_split[1][4][:,0])[None,:]*tri_vals[:,0,:,0])
 
-        return np.absolute(out11*out22 - out12*out21), map_pts
+        coeffs[:,6,:] = (1/ps_split[1][2][:,1])[None,:]*(utils.dot(ps_split[0][2], tri_vals[:,1::,:,1])/2 - (ps_split[1][2][:,0])[None,:]*tri_vals[:,0,:,1])
+        coeffs[:,7,:] = (1/ps_split[1][7][:,1])[None,:]*(utils.dot(ps_split[0][7], tri_vals[:,1::,:,1])/2 - (ps_split[1][7][:,0])[None,:]*tri_vals[:,0,:,1])
+        coeffs[:,8,:] = (1/ps_split[1][1][:,2])[None,:]*(utils.dot(ps_split[0][1], tri_vals[:,1::,:,1])/2 - (ps_split[1][1][:,0])[None,:]*tri_vals[:,0,:,1])
 
+        coeffs[:,9,:] = (1/ps_split[1][5][:,1])[None,:]*(utils.dot(ps_split[0][5], tri_vals[:,1::,:,2])/2 - (ps_split[1][5][:,0])[None,:]*tri_vals[:,0,:,2])
+        coeffs[:,10,:] = (1/ps_split[1][8][:,1])[None,:]*(utils.dot(ps_split[0][8], tri_vals[:,1::,:,2])/2 - (ps_split[1][8][:,0])[None,:]*tri_vals[:,0,:,2])
+        coeffs[:,11,:] = (1/ps_split[1][3][:,2])[None,:]*(utils.dot(ps_split[0][3], tri_vals[:,1::,:,2])/2 - (ps_split[1][3][:,0])[None,:]*tri_vals[:,0,:,2])
+
+
+        coeffs[:,12,:] = (ps_split[2][0][:,0])[None,:]*coeffs[:,3,:] + (ps_split[2][0][:,1])[None,:]*coeffs[:,8,:]
+        coeffs[:,13,:] = (ps_split[2][1][:,1])[None,:]*coeffs[:,6,:] + (ps_split[2][1][:,2])[None,:]*coeffs[:,11,:]
+        coeffs[:,14,:] = (ps_split[2][2][:,2])[None,:]*coeffs[:,9,:] + (ps_split[2][2][:,0])[None,:]*coeffs[:,5,:]
+        coeffs[:,15,:] = (ps_split[2][0][:,0])[None,:]*coeffs[:,4,:] + (ps_split[2][0][:,1])[None,:]*coeffs[:,7,:]
+        coeffs[:,16,:] = (ps_split[2][1][:,1])[None,:]*coeffs[:,7,:] + (ps_split[2][1][:,2])[None,:]*coeffs[:,10,:]
+        coeffs[:,17,:] = (ps_split[2][2][:,0])[None,:]*coeffs[:,4,:] + (ps_split[2][2][:,2])[None,:]*coeffs[:,10,:]
+
+        #barycentre coords of middle points:
+        coeffs[:,18,:] = (ps_split[1][9][:,0])[None,:]*coeffs[:,4,:] + (ps_split[1][9][:,1])[None,:]*coeffs[:,7,:] + (ps_split[1][9][:,2])[None,:]*coeffs[:,10,:]
+
+        return coeffs
 
         # # have to separate into cases based on the coordinate expression for the map and metric:
         # # there are three problematic possibilities:
@@ -605,8 +430,9 @@ class sphere_diffeomorphism(object):
 
         # return density, map_pts
 
-# in spherical coordinates :
-       # # separate regions starting at and mapped to the north pole
+
+        # in spherical coordinates :
+        # # separate regions starting at and mapped to the north pole
         # map_pts = self(q_pts)
         # grad_map_n = self.eval_grad(q_pts, map_pts)
         
@@ -658,49 +484,175 @@ class sphere_diffeomorphism(object):
 
         # return np.absolute(det_out)
 
+class composite_sphere_diffeomorphism(object):
 
+    """
+    Basic class for composite splines interpolation
 
+    same parameters as the sphere_diffeomorphism class
+    with additional specification for the number of maps in the composition
 
-# this more ad-hoc approach which I don't like:
+    inputs:
+        mesh: spherical_triangulation object from mesh_functions.py
+        vals: (n_maps,3,4,N) array defining the jet (\phi, D\varphi) at the grid points
+        coeffs: (n_maps,3,19,N) array defining the pre-allocated array of coefficients 
+        ns: (n_maps,) array of time points when remapping is performed
+    """
+
+    def __init__(self, mesh, vals, coeffs, ns):
+
+        self.mesh = mesh
+        self.vals = vals
+        self.ns = ns
+        self.coeffs = coeffs # don't intialize any coefficients though
+        self.Nc = 0 # counter for the number of maps that have been filled
+
+        return
+
+    def __call__(self, q_pts, N_c = None):
+        
+        q_pts_n = q_pts.copy()
+        if N_c == None:
+            N_c = self.Nc
+        
+        for i in reversed(range(N_c)):
+            # compute barycentric coordinates and containing triangle
+            bcc, trangs, v_pts = self.mesh.query(q_pts_n)
     
-        # then form a matrix representation of the grad_map
-        # w.r.t. orthonormal bases of each tangent space.
+            # # additional operation to find split triangle
+            bb = bary_minmax(bcc)
+            nCs = Cs[bb[0], bb[1]]
 
-        # #first for T_p S^2
-        # #separate everything away from the poles
-        # inds0 = np.where(np.absolute(dot(q_pts, [0,1,0])) >= (1-1e-5))[0]
-        # a1 = np.array(cross(q_pts,[0,1,0]))
-        # a2 = np.array(cross(q_pts, a1))
-        # #replace first and last rows
-        # a1[:,inds0] = cross(q_pts[:,inds0], [0,0,1])
-        # a2[:,inds0] = cross(q_pts[:,inds0], a1[:,inds0])
+            # vertices of split triangle
+            v_pts_n = new_vpoints(v_pts, bb) # TODO: get rid of this operation
+            # get appropriate coefficients and recompute barycentric coordinates
+            cfs =  self.coeffs[i][:,:,trangs]
+            bcc_n = utils.bary_coords(v_pts_n[:,0,:], v_pts_n[:,1,:], v_pts_n[:,2,:], q_pts_n)
 
-        # #normalize the direction vectors
-        # a1_n, a2_n = div_norm(a1.T), div_norm(a2.T)
+            # evaluate the quadratic Berstein-Bezier polynomial in each split triangle
+            inds = range(len(nCs))
 
-        # # then for T_{\alpha} S^2
-        # inds0_a = np.where(np.absolute(dot(map_pts, [0,1,0])) >= (1-1e-5))[0]
-        # a1_a = np.array(cross(map_pts,[0,1,0]))
-        # a2_a = np.array(cross(map_pts, a1_a))
-        # #replace first and last rows
-        # a1_a[:,inds0_a] = cross(map_pts[:,inds0_a], [0,0,1])
-        # a2_a[:,inds0_a] = cross(map_pts[:,inds0_a], a1_a[:,inds0_a])
+            outs = (bcc_n[:,0]**2)[None,:]*cfs[:,nCs[:,0], inds] + \
+                   (bcc_n[:,1]**2)[None,:]*cfs[:,nCs[:,1], inds] + \
+                   (bcc_n[:,2]**2)[None,:]*cfs[:,nCs[:,2], inds] + \
+                 2*(bcc_n[:,1]*bcc_n[:,0])[None,:]*cfs[:,nCs[:,3], inds] +\
+                 2*(bcc_n[:,2]*bcc_n[:,1])[None,:]*cfs[:,nCs[:,4], inds] +\
+                 2*(bcc_n[:,2]*bcc_n[:,0])[None,:]*cfs[:,nCs[:,5], inds]
+            
+            norm = np.sqrt(outs[0,:]**2 + outs[1,:]**2 + outs[2,:]**2)
+            q_pts_n = (((1/norm)[None,:]*outs)).T
 
-        # #normalize the direction vectors
-        # a1_a_n, a2_a_n = div_norm(a1_a.T), div_norm(a2_a.T)
+        return q_pts_n
+
+    def eval_all(self, q_pts):
+        # same as call except it outputs all the intermediate steps:
+                
+        q_pts_n = q_pts.copy()
+        eval_outs = [q_pts.copy() for _ in range(self.Nc+1)]
+        j = 1
+        for i in reversed(range(self.Nc)):
+            # compute barycentric coordinates and containing triangle
+            bcc, trangs, v_pts = self.mesh.query(q_pts_n)
+    
+            # # additional operation to find split triangle
+            bb = bary_minmax(bcc)
+            nCs = Cs[bb[0], bb[1]]
+
+            # vertices of split triangle
+            v_pts_n = new_vpoints(v_pts, bb) # TODO: get rid of this operation
+            # get appropriate coefficients and recompute barycentric coordinates
+            cfs =  self.coeffs[i][:,:,trangs]
+            bcc_n = utils.bary_coords(v_pts_n[:,0,:], v_pts_n[:,1,:], v_pts_n[:,2,:], q_pts_n)
+
+            # evaluate the quadratic Berstein-Bezier polynomial in each split triangle
+            inds = range(len(nCs))
+
+            outs = (bcc_n[:,0]**2)[None,:]*cfs[:,nCs[:,0], inds] + \
+                   (bcc_n[:,1]**2)[None,:]*cfs[:,nCs[:,1], inds] + \
+                   (bcc_n[:,2]**2)[None,:]*cfs[:,nCs[:,2], inds] + \
+                 2*(bcc_n[:,1]*bcc_n[:,0])[None,:]*cfs[:,nCs[:,3], inds] +\
+                 2*(bcc_n[:,2]*bcc_n[:,1])[None,:]*cfs[:,nCs[:,4], inds] +\
+                 2*(bcc_n[:,2]*bcc_n[:,0])[None,:]*cfs[:,nCs[:,5], inds]
+            
+            norm = np.sqrt(outs[0,:]**2 + outs[1,:]**2 + outs[2,:]**2)
+            q_pts_n = (((1/norm)[None,:]*outs)).T
+            
+            eval_outs[j] = q_pts_n 
+
+            j +=1
+
+        return eval_outs
+
+    def stencil_eval(self, q_pts, st_pts):
+        # queries at q_pts and evaluates at st_pts.
+        # reduces the computational cost of querying at the expense of
+        # performing a small extrapolation for the stencil points
+
+        bcc, trangs, v_pts = self.mesh.query(q_pts.T)
+        bmm = bary_minmax(bcc)
+
+        v_pts_n = new_vpoints(v_pts, bmm) # TODO: get rid of this operation
+        cfs = self.coeffs[:,:,trangs]
+
+        nCs = Cs[bmm[0], bmm[1]]
+
+        inds = range(len(nCs))
+        st_pts_n = st_pts[:]
+
+        for i in range(4):
+
+            bcc_n = utils.bary_coords(v_pts_n[:,0,:], v_pts_n[:,1,:], v_pts_n[:,2,:], st_pts[:,i,:].T)
+
+            # evaluate the quadratic Berstein-Bezier polynomial in each split trianglea
+            outs = (bcc_n[:,0]**2)[None,:]*cfs[:,nCs[:,0], inds] + \
+                (bcc_n[:,1]**2)[None,:]*cfs[:,nCs[:,1], inds] + \
+                (bcc_n[:,2]**2)[None,:]*cfs[:,nCs[:,2], inds] + \
+                2*(bcc_n[:,1]*bcc_n[:,0])[None,:]*cfs[:,nCs[:,3], inds] +\
+                2*(bcc_n[:,2]*bcc_n[:,1])[None,:]*cfs[:,nCs[:,4], inds] +\
+                2*(bcc_n[:,2]*bcc_n[:,0])[None,:]*cfs[:,nCs[:,5], inds]
+
+            st_pts_n[:,i,:] = outs
+
+        return st_pts_n
+
+    def assemble_coefficients(self, i, vals):
+        """
+        assemble all the coefficients to perform the PS split interpolation.
+        """
+        # void function replaces the coefficients of the array:
+        self.vals[i] = vals
+        tri_vals = self.vals[i][:,:,np.array(self.mesh.simplices)]
+        ps_split = self.mesh.ps_split
 
 
-        # #change bases and compute determinant
-        # out1_temp = mat_mul(grad_map_n, a1_n)
-        # out2_temp = mat_mul(grad_map_n, a2_n)
+        self.coeffs[i][:,0,:] =  tri_vals[:,0,:,0] 
+        self.coeffs[i][:,1,:] =  tri_vals[:,0,:,1]
+        self.coeffs[i][:,2,:] =  tri_vals[:,0,:,2]
 
-        # out11 = dot(a1_a_n, out1_temp)
-        # out12 = dot(a2_a_n, out1_temp)
-        # out21 = dot(a1_a_n, out2_temp)
-        # out22 = dot(a2_a_n, out2_temp)
+        self.coeffs[i][:,3,:] = (1/ps_split[1][0][:,1])[None,:]*(utils.dot(ps_split[0][0], tri_vals[:,1::,:,0])/2 - (ps_split[1][0][:,0])[None,:]*tri_vals[:,0,:,0])
+        self.coeffs[i][:,4,:] = (1/ps_split[1][6][:,1])[None,:]*(utils.dot(ps_split[0][6], tri_vals[:,1::,:,0])/2 - (ps_split[1][6][:,0])[None,:]*tri_vals[:,0,:,0])
+        self.coeffs[i][:,5,:] = (1/ps_split[1][4][:,2])[None,:]*(utils.dot(ps_split[0][4], tri_vals[:,1::,:,0])/2 - (ps_split[1][4][:,0])[None,:]*tri_vals[:,0,:,0])
 
-        # return np.absolute(out11*out22 - out12*out21)
+        self.coeffs[i][:,6,:] = (1/ps_split[1][2][:,1])[None,:]*(utils.dot(ps_split[0][2], tri_vals[:,1::,:,1])/2 - (ps_split[1][2][:,0])[None,:]*tri_vals[:,0,:,1])
+        self.coeffs[i][:,7,:] = (1/ps_split[1][7][:,1])[None,:]*(utils.dot(ps_split[0][7], tri_vals[:,1::,:,1])/2 - (ps_split[1][7][:,0])[None,:]*tri_vals[:,0,:,1])
+        self.coeffs[i][:,8,:] = (1/ps_split[1][1][:,2])[None,:]*(utils.dot(ps_split[0][1], tri_vals[:,1::,:,1])/2 - (ps_split[1][1][:,0])[None,:]*tri_vals[:,0,:,1])
 
+        self.coeffs[i][:,9,:] = (1/ps_split[1][5][:,1])[None,:]*(utils.dot(ps_split[0][5], tri_vals[:,1::,:,2])/2 - (ps_split[1][5][:,0])[None,:]*tri_vals[:,0,:,2])
+        self.coeffs[i][:,10,:] = (1/ps_split[1][8][:,1])[None,:]*(utils.dot(ps_split[0][8], tri_vals[:,1::,:,2])/2 - (ps_split[1][8][:,0])[None,:]*tri_vals[:,0,:,2])
+        self.coeffs[i][:,11,:] = (1/ps_split[1][3][:,2])[None,:]*(utils.dot(ps_split[0][3], tri_vals[:,1::,:,2])/2 - (ps_split[1][3][:,0])[None,:]*tri_vals[:,0,:,2])
+
+
+        self.coeffs[i][:,12,:] = (ps_split[2][0][:,0])[None,:]*self.coeffs[i][:,3,:] + (ps_split[2][0][:,1])[None,:]*self.coeffs[i][:,8,:]
+        self.coeffs[i][:,13,:] = (ps_split[2][1][:,1])[None,:]*self.coeffs[i][:,6,:] + (ps_split[2][1][:,2])[None,:]*self.coeffs[i][:,11,:]
+        self.coeffs[i][:,14,:] = (ps_split[2][2][:,2])[None,:]*self.coeffs[i][:,9,:] + (ps_split[2][2][:,0])[None,:]*self.coeffs[i][:,5,:]
+        self.coeffs[i][:,15,:] = (ps_split[2][0][:,0])[None,:]*self.coeffs[i][:,4,:] + (ps_split[2][0][:,1])[None,:]*self.coeffs[i][:,7,:]
+        self.coeffs[i][:,16,:] = (ps_split[2][1][:,1])[None,:]*self.coeffs[i][:,7,:] + (ps_split[2][1][:,2])[None,:]*self.coeffs[i][:,10,:]
+        self.coeffs[i][:,17,:] = (ps_split[2][2][:,0])[None,:]*self.coeffs[i][:,4,:] + (ps_split[2][2][:,2])[None,:]*self.coeffs[i][:,10,:]
+
+        #barycentre coords of middle points:
+        self.coeffs[i][:,18,:] = (ps_split[1][9][:,0])[None,:]*self.coeffs[i][:,4,:] + (ps_split[1][9][:,1])[None,:]*self.coeffs[i][:,7,:] + (ps_split[1][9][:,2])[None,:]*self.coeffs[i][:,10,:]
+
+        return 
 
 class sphere_diffeomorphism_linear(object):
 
@@ -733,253 +685,129 @@ class sphere_diffeomorphism_linear(object):
         norm = np.sqrt(out_x**2 + out_y**2 + out_z**2)
         return np.array([out_x/norm, out_y/norm, out_z/norm])
 
-
-
 # interpolation classes for the velocity field ===================================================================
     
 # Vector field interpolation class used during the barotropic vorticity simulations
     
-class spline_interp_vec(object):
+class spline_interp_velocity(object):
+    """
+    Basic interpolation class for the velocity field.
+    Extends to a 2 + 1D interpolant using Lagrange interpolation in time
+    
+    Inputs: same of sphere_diffeomorphisms class with the additional
+            ts value which defines the time grid.    
+    """
 
+    def __init__(self, mesh, vals, coeffs, ts):
 
-    def __init__(self, grid, phi, theta, simplices, msimplices, vals, grad_vals):
-
-        self.grid = grid
-        # self.simplices = self.grid.simplices
-        self.simplices = simplices
-        self.msimplices = msimplices
-        self.points = grid.points
+        self.mesh = mesh
         self.vals = vals
-        self.grad_vals = grad_vals
-        self.phi = phi.copy()
-        self.theta = theta.copy()
-        self.coeffs_x, self.coeffs_y, self.coeffs_z = self.assemble_coefficients(inds = np.array(self.simplices),
-                                                                         points = self.points,
-                                                                         vals = self.vals,
-                                                                         grad_vals = self.grad_vals)
+        self.ts = ts
+        self.coeffs = coeffs
+        self.stepping = False
+        self.nVs = 1
+
         return
 
+    def init_coeffs(self, i):
+        # intialize the ith coefficient array:
+            self.coeffs[i] = self.assemble_coefficients(self.coeffs[i], i)
+            return
 
-    def eval(self, q_pts, st_pts = None, order = 2):
-        bcc, trangs, v_pts = self.query(q_pts)
+    def __call__(self, t, dt, q_pts):
+        
+        # compute barycentric coordinates and containing triangle
+        bcc, trangs, v_pts = self.mesh.query(q_pts.T)
+ 
+        # # additional operation to find split triangle
         bb = bary_minmax(bcc)
-        nCs = np.stack(Cs[bb[:,0], bb[:,1]], axis = 0)
+        nCs = Cs[bb[0], bb[1]]
 
-        v_pts_n = new_vpoints(v_pts, bb)
-        cfs_x = np.array(self.coeffs_x)[:,trangs]
-        cfs_y = np.array(self.coeffs_y)[:,trangs]
-        cfs_z = np.array(self.coeffs_z)[:,trangs]
+        # vertices of split triangle
+        v_pts_n = new_vpoints(v_pts, bb) # TODO: get rid of this operation
+        # get appropriate coefficients and recompute barycentric coordinates
+        bcc_n = utils.bary_coords(v_pts_n[:,0,:], v_pts_n[:,1,:], v_pts_n[:,2,:], q_pts.T)
 
-        out_x = ps_split_eval(v_pts_n, nCs = nCs, q_pts = q_pts.T, coeffs = cfs_x)
-        out_y = ps_split_eval(v_pts_n, nCs = nCs, q_pts = q_pts.T, coeffs = cfs_y)
-        out_z = ps_split_eval(v_pts_n, nCs = nCs, q_pts = q_pts.T, coeffs = cfs_z)
+        cfs =  self.coeffs[:,:,:,trangs]
+        # evaluate the quadratic Berstein-Bezier polynomial in each split triangle
+        inds = range(len(nCs))
 
-        return np.array([out_x, out_y, out_z])
+        outs = (bcc_n[:,0]**2)[None, None, :]*cfs[:,:,nCs[:,0], inds] + \
+               (bcc_n[:,1]**2)[None, None, :]*cfs[:,:,nCs[:,1], inds] + \
+               (bcc_n[:,2]**2)[None, None, :]*cfs[:,:,nCs[:,2], inds] + \
+             2*(bcc_n[:,1]*bcc_n[:,0])[None, None, :]*cfs[:,:,nCs[:,3], inds] +\
+             2*(bcc_n[:,2]*bcc_n[:,1])[None, None, :]*cfs[:,:,nCs[:,4], inds] +\
+             2*(bcc_n[:,2]*bcc_n[:,0])[None, None, :]*cfs[:,:,nCs[:,5], inds]
+        
+        # then perform interpolation in time along first dimension:
+        if self.nVs == 3:
+            tau0, tau1, tau2 = self.ts[0], self.ts[0] + dt, self.ts[0] + 2*dt
+            l0 = (t-tau1)*(t-tau2)/(2*dt**2)
+            l1 = (t-tau0)*(t-tau2)/(-dt**2)
+            l2 = (t-tau0)*(t-tau1)/(2*dt**2)
 
-    def query(self, q_pts):
-        [phi,theta] = utils.cart2sphere(q_pts)
-        ijs = self.inds(phi,theta)
-        return self.containing_simplex_and_bcc_structured(ijs, q_pts.T)
+            return l0*outs[0] + l1*outs[1] + l2*outs[2]
 
-    def assemble_coefficients(self, inds, points, vals, grad_vals):
+
+        if self.nVs == 1:
+
+            return outs[0]
+
+        if self.nVs == 2:
+            tau = (t - self.ts[0])/dt
+
+            return (1-tau)*outs[0] + tau*outs[1]
+
+
+        return outs
+
+
+
+    def assemble_coefficients(self, coeffs, i):
         """
-        Void function to assemble all the coefficients to perform the PS split
-        interpolation
+        assemble all the coefficients to perform the PS split interpolation.
         """
-        #inds = np.array(self.simplices)
-        # All values that don't need to be recomputed:
-        v_pts = points[inds]
-        v1r, v2r, v3r = v_pts[:,0,:].copy(), v_pts[:,1,:].copy(), v_pts[:,2,:].copy()
-        v4r = utils.div_norm((v1r + v2r + v3r)/3).T
-        e1r, e2r, e3r = utils.div_norm(v1r/2+v2r/2).T, utils.div_norm(v2r/2+v3r/2).T, utils.div_norm(v3r/2 + v1r/2).T
-        # Calculate barycentric coords of the edges
-        # h12r, h21r, h23r, h32r, h13r, h31r = h(e1r,v1r).T, h(e1r,v2r).T, h(e2r,v2r).T, h(e2r,v3r).T, h(e3r,v1r).T, h(e3r,v3r).T
-        #tangential projection
-        h12r, h21r, h23r = meshes.sphere_tan_proj(v2r-v1r,v1r).T, meshes.sphere_tan_proj(v1r-v2r,v2r).T, meshes.sphere_tan_proj(v3r-v2r,v2r).T
-        h32r, h13r, h31r = meshes.sphere_tan_proj(v2r-v3r,v3r).T, meshes.sphere_tan_proj(v3r-v1r,v1r).T, meshes.sphere_tan_proj(v1r-v3r,v3r).T
-        h41, h42, h43 = meshes.sphere_tan_proj(v4r-v1r,v1r).T, meshes.sphere_tan_proj(v4r-v2r,v2r).T, meshes.sphere_tan_proj(v4r-v3r,v3r).T
-
-        g12r, g21r = utils.bary_coords(v1r,e1r,v4r,h12r), utils.bary_coords(v2r,v4r,e1r,h21r)
-        g23r, g32r = utils.bary_coords(v2r,e2r,v4r,h23r), utils.bary_coords(v3r,v4r,e2r,h32r)
-        g13r, g31r = utils.bary_coords(v1r,v4r,e3r,h13r), utils.bary_coords(v3r,e3r,v4r,h31r)
-
-        g14r = utils.bary_coords(v1r,v4r,e3r,meshes.sphere_tan_proj(v4r,v1r).T)
-        g24r = utils.bary_coords(v2r,v4r,e1r,meshes.sphere_tan_proj(v4r,v2r).T)
-        g34r = utils.bary_coords(v3r,v4r,e2r,meshes.sphere_tan_proj(v4r,v3r).T)
-
-        Ar = utils.bary_coords(v1r,v2r,v3r,v4r)
-
-        #assemble into nice lists
-        verts = [v1r,v2r,v3r,v4r]
-        Hs = [h12r.T, h21r.T, h23r.T, h32r.T, h13r.T, h31r.T, h41.T, h42.T, h43.T]
-        Gs = [g12r, g21r, g23r, g32r, g13r, g31r, g14r, g24r, g34r, Ar]
-        g_1r, g_2r, g_3r = utils.bary_coords(v1r,v2r,v3r,e1r), utils.bary_coords(v1r,v2r,v3r,e2r), utils.bary_coords(v1r,v2r,v3r,e3r)
-        gs = [g_1r, g_2r, g_3r]
-
-        # now the non-recyclable quantities
-        #in x--------
-
-        grad_f1 = np.array([grad_vals[0][0,:][inds[:,0]], grad_vals[0][1,:][inds[:,0]], grad_vals[0][2,:][inds[:,0]]])
-        grad_f2 = np.array([grad_vals[0][0,:][inds[:,1]], grad_vals[0][1,:][inds[:,1]], grad_vals[0][2,:][inds[:,1]]])
-        grad_f3 = np.array([grad_vals[0][0,:][inds[:,2]], grad_vals[0][1,:][inds[:,2]], grad_vals[0][2,:][inds[:,2]]])
-        grad_fx = [grad_f1, grad_f2, grad_f3]
-        c123x = vals[0][inds]
-        coeffs_x = PS_split_coeffs(verts = verts, Hs = Hs, Gs = Gs, Es = gs,
-                                        c123 =  c123x, grad_f = grad_fx)
-
-        #in y------------
-        grad_f1y = np.array([grad_vals[1][0,:][inds[:,0]], grad_vals[1][1,:][inds[:,0]], grad_vals[1][2,:][inds[:,0]]])
-        grad_f2y = np.array([grad_vals[1][0,:][inds[:,1]], grad_vals[1][1,:][inds[:,1]], grad_vals[1][2,:][inds[:,1]]])
-        grad_f3y = np.array([grad_vals[1][0,:][inds[:,2]], grad_vals[1][1,:][inds[:,2]], grad_vals[1][2,:][inds[:,2]]])
-        grad_fy = [grad_f1y, grad_f2y, grad_f3y]
-        c123y = vals[1][inds]
-
-        coeffs_y = PS_split_coeffs(verts = verts, Hs = Hs, Gs = Gs, Es = gs,
-                                        c123 =  c123y, grad_f = grad_fy)
-
-        # in y------------
-        grad_f1z = np.array([grad_vals[2][0,:][inds[:,0]], grad_vals[2][1,:][inds[:,0]], grad_vals[2][2,:][inds[:,0]]])
-        grad_f2z = np.array([grad_vals[2][0,:][inds[:,1]], grad_vals[2][1,:][inds[:,1]], grad_vals[2][2,:][inds[:,1]]])
-        grad_f3z = np.array([grad_vals[2][0,:][inds[:,2]], grad_vals[2][1,:][inds[:,2]], grad_vals[2][2,:][inds[:,2]]])
-        grad_fz = [grad_f1z, grad_f2z, grad_f3z]
-        c123z = vals[2][inds]
-        coeffs_z = PS_split_coeffs(verts = verts, Hs = Hs, Gs = Gs, Es = gs,
-                                        c123 =  c123z, grad_f = grad_fz)
-
-        return coeffs_x, coeffs_y, coeffs_z
+        # void function replaces the coefficients of the array:
+        tri_vals = self.vals[i][:,:,np.array(self.mesh.simplices)]
+        ps_split = self.mesh.ps_split
 
 
-    def containing_simplex_and_bcc_structured(self, inds, pts):
-        #obtain indices of which half of quadralateral
-        phi0, theta0 = self.phi[inds[0]], self.theta[inds[1]]
-        v_0 = utils.sphere2cart(phi0, theta0)
+        coeffs[:,0,:] =  tri_vals[:,0,:,0] 
+        coeffs[:,1,:] =  tri_vals[:,0,:,1]
+        coeffs[:,2,:] =  tri_vals[:,0,:,2]
 
-        # For the endpoint:
-        ijsp1 = [inds[0].copy() + 1, inds[1].copy() + 1]
-        ijsp1[0] = ijsp1[0] % (len(self.phi))
+        coeffs[:,3,:] = (1/ps_split[1][0][:,1])[None,:]*(utils.dot(ps_split[0][0], tri_vals[:,1::,:,0])/2 - (ps_split[1][0][:,0])[None,:]*tri_vals[:,0,:,0])
+        coeffs[:,4,:] = (1/ps_split[1][6][:,1])[None,:]*(utils.dot(ps_split[0][6], tri_vals[:,1::,:,0])/2 - (ps_split[1][6][:,0])[None,:]*tri_vals[:,0,:,0])
+        coeffs[:,5,:] = (1/ps_split[1][4][:,2])[None,:]*(utils.dot(ps_split[0][4], tri_vals[:,1::,:,0])/2 - (ps_split[1][4][:,0])[None,:]*tri_vals[:,0,:,0])
 
-        phi_p1, theta_p1 = self.phi[ijsp1[0]], self.theta[ijsp1[1]]
+        coeffs[:,6,:] = (1/ps_split[1][2][:,1])[None,:]*(utils.dot(ps_split[0][2], tri_vals[:,1::,:,1])/2 - (ps_split[1][2][:,0])[None,:]*tri_vals[:,0,:,1])
+        coeffs[:,7,:] = (1/ps_split[1][7][:,1])[None,:]*(utils.dot(ps_split[0][7], tri_vals[:,1::,:,1])/2 - (ps_split[1][7][:,0])[None,:]*tri_vals[:,0,:,1])
+        coeffs[:,8,:] = (1/ps_split[1][1][:,2])[None,:]*(utils.dot(ps_split[0][1], tri_vals[:,1::,:,1])/2 - (ps_split[1][1][:,0])[None,:]*tri_vals[:,0,:,1])
 
-        v_1 = np.array(utils.sphere2cart(phi_p1, theta_p1))
-
-        n_vs = utils.cross(v_0, v_1)
-        s_inds = np.heaviside(-utils.dot(n_vs, pts.T), 0).astype(int)
-        # s_inds = np.heaviside(-det([v_0, v_1, pts.T]),1).astype(int)
-    #       the indices swap since the lambda moves across columns,
-    #       whereas theta increases along the rows
-        tri_out_temp = self.msimplices[inds[1], inds[0], :, :].reshape([len(pts),2, 4])
-        # now assemble triangle list
-        l = np.shape(tri_out_temp)[0]
-        tri_out = np.array(list(tri_out_temp[np.arange(0,l),s_inds]))
-        trangs = tri_out[:,3]
-        verts = self.points[tri_out[:,0:3]]
-
-        bcc = utils.bary_coords(verts[:,0,:], verts[:,1,:], verts[:,2,:], pts)
-
-        return bcc, trangs, verts
-
-    def inds(self, phiq, thetaq):
-        """
-        input a value (phi,theta) to interpolate
-        phi0, theta0 should be meshgrids with the same amount of points and
-        square.
-
-        phi_s0, theta_s0: Numpy array of 4 meshgrids of the stencils points
-        each grid represents one of the four corners.
-
-        output: list of indices, base points of position in the cell also
-        position of the stencil point relative to the cell
-        """
-
-        dphi = abs(self.phi[1]-self.phi[0])
-        dthe = abs(self.theta[1]-self.theta[0])
-        #Properly account for values outside of the interval
-        phiq_n = phiq % (2*np.pi)
-        phi_l = ((phiq_n-self.phi[0])//dphi).astype(int) % (len(self.phi))
-        #don't mod this direction, just correct for boundary
-        theta_l = ((thetaq-self.theta[0])//dthe).astype(int)
-
-        theta_l[theta_l == (len(self.theta)-1)] = len(self.theta)-2
-        # #also compute position within the cell
-        phi_c = (phiq_n-self.phi[phi_l])/dphi
-        theta_c = (thetaq-self.theta[theta_l])/dthe
-
-        #need added check if query lands on theta_c = 0 or 1 lines.
-        #this is a tunable range and only pertains to the interior points
-        # TODO: make this less ad hoc
-        inds0 = np.where((theta_c <= 0.03) & (theta_l != 0))
-        inds1 = np.where((theta_c > 0.85) & (theta_l !=  len(self.theta)-2))
-
-        phi_p1 = (phi_l + 1) % (len(self.phi))
-        the_p1 = theta_l + 1
-
-        #in or outside triangle for theta_c = 0.
-        v_0 = np.array(utils.sphere2cart(self.phi[phi_l[inds0]], self.theta[theta_l[inds0]]))
-        v_1 = np.array(utils.sphere2cart(self.phi[phi_p1[inds0]], self.theta[theta_l[inds0]]))
-
-        n_vs = utils.cross(v_0, v_1)
-        q_pts0 = np.array(utils.sphere2cart(phiq_n[inds0], thetaq[inds0]))
-        s_inds0 = np.heaviside(utils.dot(n_vs, q_pts0), 0).astype(int)
-        # pdb.set_trace()
-        theta_l[inds0] = theta_l[inds0]-s_inds0
-        #in or outside triangle for theta_c = 0.
-        v_01 = np.array(utils.sphere2cart(self.phi[phi_l[inds1]], self.theta[the_p1[inds1]]))
-        v_11 = np.array(utils.sphere2cart(self.phi[phi_p1[inds1]], self.theta[the_p1[inds1]]))
-
-        n_vs2 = utils.cross(v_01, v_11)
-        q_pts1 = np.array(utils.sphere2cart(phiq_n[inds1], thetaq[inds1]))
-
-        s_inds1 = np.heaviside(-utils.dot(n_vs2, q_pts1), 0).astype(int)
-
-        theta_l[inds1] = theta_l[inds1] + s_inds1
-
-        return [phi_l, theta_l] #, [phi_c, theta_c]
+        coeffs[:,9,:] = (1/ps_split[1][5][:,1])[None,:]*(utils.dot(ps_split[0][5], tri_vals[:,1::,:,2])/2 - (ps_split[1][5][:,0])[None,:]*tri_vals[:,0,:,2])
+        coeffs[:,10,:] = (1/ps_split[1][8][:,1])[None,:]*(utils.dot(ps_split[0][8], tri_vals[:,1::,:,2])/2 - (ps_split[1][8][:,0])[None,:]*tri_vals[:,0,:,2])
+        coeffs[:,11,:] = (1/ps_split[1][3][:,2])[None,:]*(utils.dot(ps_split[0][3], tri_vals[:,1::,:,2])/2 - (ps_split[1][3][:,0])[None,:]*tri_vals[:,0,:,2])
 
 
+        coeffs[:,12,:] = (ps_split[2][0][:,0])[None,:]*coeffs[:,3,:] + (ps_split[2][0][:,1])[None,:]*coeffs[:,8,:]
+        coeffs[:,13,:] = (ps_split[2][1][:,1])[None,:]*coeffs[:,6,:] + (ps_split[2][1][:,2])[None,:]*coeffs[:,11,:]
+        coeffs[:,14,:] = (ps_split[2][2][:,2])[None,:]*coeffs[:,9,:] + (ps_split[2][2][:,0])[None,:]*coeffs[:,5,:]
+        coeffs[:,15,:] = (ps_split[2][0][:,0])[None,:]*coeffs[:,4,:] + (ps_split[2][0][:,1])[None,:]*coeffs[:,7,:]
+        coeffs[:,16,:] = (ps_split[2][1][:,1])[None,:]*coeffs[:,7,:] + (ps_split[2][1][:,2])[None,:]*coeffs[:,10,:]
+        coeffs[:,17,:] = (ps_split[2][2][:,0])[None,:]*coeffs[:,4,:] + (ps_split[2][2][:,2])[None,:]*coeffs[:,10,:]
+
+        #barycentre coords of middle points:
+        coeffs[:,18,:] = (ps_split[1][9][:,0])[None,:]*coeffs[:,4,:] + (ps_split[1][9][:,1])[None,:]*coeffs[:,7,:] + (ps_split[1][9][:,2])[None,:]*coeffs[:,10,:]
+
+        return coeffs
 
 # interpolation functions: --------------------------------------------------------------------
 
-def PS_split_coeffs(verts, Hs, Gs, Es, c123, grad_f):
-    """
-    Function which returns the 19 coefficients defining the S^1_2(T_{PS})
-    spherical spline interpolant
-    """
-    v1, v2, v3, v4 = verts[0], verts[1], verts[2], verts[3]
-    h12, h21, h23, h32, h13, h31, h41, h42, h43 = Hs[0], Hs[1], Hs[2], Hs[3], Hs[4], Hs[5], Hs[6], Hs[7], Hs[8]
-    g12, g21, g23, g32, g13, g31, g14, g24, g34, A = Gs[0], Gs[1], Gs[2], Gs[3], Gs[4], Gs[5], Gs[6], Gs[7], Gs[8], Gs[9]
-    g_1, g_2, g_3 = Es[0], Es[1], Es[2]
-
-    #obtain coefficients and combine appropriately
-    c1, c2, c3 = c123[:,0], c123[:,1], c123[:,2]
-    c4 = (utils.dot(h12, grad_f[0])/2 - g12[:,0]*c1)/g12[:,1]
-    c5 = (utils.dot(h41, grad_f[0])/2 - g14[:,0]*c1)/g14[:,1]
-    c6 = (utils.dot(h13, grad_f[0])/2 - g13[:,0]*c1)/g13[:,2]
-
-    c7 = (utils.dot(h23, grad_f[1])/2 - g23[:,0]*c2)/g23[:,1]
-    c8 = (utils.dot(h42, grad_f[1])/2 - g24[:,0]*c2)/g24[:,1]
-    c9 = (utils.dot(h21, grad_f[1])/2 - g21[:,0]*c2)/g21[:,2]
-
-    c10 = (utils.dot(h31, grad_f[2])/2 - g31[:,0]*c3)/g31[:,1]
-    c11 = (utils.dot(h43, grad_f[2])/2 - g34[:,0]*c3)/g34[:,1]
-    c12 = (utils.dot(h32, grad_f[2])/2 - g32[:,0]*c3)/g32[:,2]
-
-
-    c13 = g_1[:,0]*c4 + g_1[:,1]*c9
-    c14 = g_2[:,1]*c7 + g_2[:,2]*c12
-    c15 = g_3[:,2]*c10 + g_3[:,0]*c6
-    c16 = g_1[:,0]*c5 + g_1[:,1]*c8
-    c17 = g_2[:,1]*c8 + g_2[:,2]*c11
-    c18 = g_3[:,0]*c5 + g_3[:,2]*c11
-
-    #barycentre coords of middle points:
-    c19 = A[:,0]*c5 + A[:,1]*c8 + A[:,2]*c11
-
-    return [c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19]
-
 #Coefficient list, this is needed for some silly indexing.
-Cs = np.array([[0, [18,1,13,7,6,16], [13,2,18,11,10,16]],
-      [[18,14,0,17,5,4],0,[14,18,2,17,10,9]],
-       [[0,12,18,3,15,4],[1,18,12,7,15,8],0]], dtype = object)
+Cs = np.array([[[0,0,0,0,0,0], [18,1,13,7,6,16], [13,2,18,11,10,16]],
+               [[18,14,0,17,5,4],[0,0,0,0,0,0],[14,18,2,17,10,9]],
+               [[0,12,18,3,15,4],[1,18,12,7,15,8],[0,0,0,0,0,0]]])
+
 edges_ps = np.array([np.array([np.array([0,0,0]),np.array([3,1,5]), np.array([5,2,3])]),
          np.array([np.array([3,6,0]),np.array([0,0,0]),np.array([6,3,2])]),
          np.array([np.array([0,4,3]),np.array([1,3,4]),np.array([0,0,0])])])
@@ -990,7 +818,6 @@ def new_vpoints(v_pts, bmm):
     This defines the new query points and coefficients to evaluate
     a quadratic spherical spline.
     """
-
     v1, v2, v3 = v_pts[:,0,:].copy(), v_pts[:,1,:].copy(), v_pts[:,2,:].copy()
     e1, e2, e3 = utils.div_norm(v1/2+v2/2).T, utils.div_norm(v2/2+v3/2).T, utils.div_norm(v3/2 + v1/2).T
     v4 = utils.div_norm((v1 + v2 + v3)/3).T
@@ -1001,7 +828,7 @@ def new_vpoints(v_pts, bmm):
 
     EE = np.array([v1, v2, v3, v4, e1, e2, e3])
     v_pts_n = np.empty(np.shape(v_pts))
-    Js = np.vstack(edges_ps[bmm[:,0], bmm[:,1]])
+    Js = np.vstack(edges_ps[bmm[0], bmm[1]])
     N = np.shape(Js)[0]
     v_pts_n1, v_pts_n2, v_pts_n3 = EE[Js[:,0],range(N),:], EE[Js[:,1],range(N),:], EE[Js[:,2],range(N),:]
     v_pts_n[:,0,:], v_pts_n[:,1,:], v_pts_n[:,2,:] = v_pts_n1, v_pts_n2, v_pts_n3
@@ -1014,53 +841,11 @@ def bary_minmax(X):
     output: (N,) array of index (0,1,2) for min and max barycentric coord
     """
 
-    return np.array([np.argmin(X, axis = 1), np.argmax(X, axis = 1)]).T
+    return np.argmin(X, axis = 1), np.argmax(X, axis = 1)
 
-def det_vec(A):
-    """
-    should be input as A = [a,b,c] where a,b,c are considered as columns of A
-    """
-    v_1, v_2, v_3 = A[0], A[1], A[2]
-    det = v_1[:,0]*v_2[:,1]*v_3[:,2] + v_2[:,0]*v_3[:,1]*v_1[:,2] + v_1[:,1]*v_2[:,2]*v_3[:,0] - \
-          (v_3[:,0]*v_2[:,1]*v_1[:,2] + v_3[:,1]*v_2[:,2]*v_1[:,0] + v_2[:,0]*v_1[:,1]*v_3[:,2])
-    return det
-
-def bary_coords(v_1,v_2,v_3,v):
-    """
-    v1, v2, v3 define vertices of the containing triangle
-    order counter-clockwise. v is the query point.
-    """
-    denom = det_vec([v_1, v_2, v_3])
-    bcc_outs = np.array([det_vec([v, v_2, v_3])/denom,
-                         det_vec([v_1,v,v_3])/denom,
-                         det_vec([v_1, v_2, v])/denom])
-    return bcc_outs.T
-
-def ps_split_eval(v_pts_n, nCs, q_pts, coeffs):
-    # evaluation of the Powell-Sabin split
-
-    inds = range(len(nCs))
-    #TODO: get rid of this operation or find a better one
-    Cfs = [coeffs[nCs[:,0], inds], coeffs[nCs[:,1], inds], coeffs[nCs[:,2], inds],
-            coeffs[nCs[:,3], inds], coeffs[nCs[:,4], inds], coeffs[nCs[:,5], inds]]
-
-    bcc_n = bary_coords(v_pts_n[:,0,:], v_pts_n[:,1,:], v_pts_n[:,2,:], q_pts)
-
-    Cfs = np.array(Cfs).T
-
-    # formula for the evaluation of a quadratic Berstein-Bezier polynomial
-    evals = Cfs[:,0]*(bcc_n[:,0]**2) + Cfs[:,1]*(bcc_n[:,1]**2) \
-            + Cfs[:,2]*(bcc_n[:,2]**2) \
-            + 2*Cfs[:,3]*bcc_n[:,0]*bcc_n[:,1] \
-            + 2*Cfs[:,4]*bcc_n[:,1]*bcc_n[:,2] \
-            + 2*Cfs[:,5]*bcc_n[:,0]*bcc_n[:,2]
-
-    return evals
 
 def grad_HBB(Cfs, bcc_n, Bs):
     bcc_x, bcc_y, bcc_z = Bs[0], Bs[1], Bs[2]
-    L_q = [[2,0,0],[0,2,0], [0,0,2], [1,1,0], [0,1,1], [1,0,1]]
-    c_facts = [1,1,1,2,2,2]
 
     dp_b1 = 2*Cfs[:,0]*bcc_n[:,0] + 2*Cfs[:,3]*bcc_n[:,1] + 2*Cfs[:,5]*bcc_n[:,2]
 
@@ -1074,15 +859,11 @@ def grad_HBB(Cfs, bcc_n, Bs):
 
     return [outx, outy, outz]
 
-def eval_stencils(v_pts_n, bmm, st_pts, coeffs):
-    # 4- point implementation
-    # stencils length is exactly four times that of the other arrays
-    nCs = np.stack(Cs[bmm[:,0], bmm[:,1]], axis = 0)
-    s1 =  ps_split_eval(v_pts_n, nCs, q_pts = st_pts[:,0,:].T, coeffs = coeffs)
-    s2 =  ps_split_eval(v_pts_n, nCs, q_pts = st_pts[:,1,:].T, coeffs = coeffs)
-    s3 =  ps_split_eval(v_pts_n, nCs, q_pts = st_pts[:,2,:].T, coeffs = coeffs)
-    s4 =  ps_split_eval(v_pts_n, nCs, q_pts = st_pts[:,3,:].T, coeffs = coeffs)
+def d_Proj(X, A):
+    outx = (1-X[:,0]**2)*A[0] + (-X[:,0]*X[:,1])*A[1] + (-X[:,0]*X[:,2])*A[2]
+    outy = (-X[:,0]*X[:,1])*A[0] + (1-X[:,1]**2)*A[1] + (-X[:,1]*X[:,2])*A[2]
+    outz = (-X[:,0]*X[:,2])*A[0] + (-X[:,1]*X[:,2])*A[1] + (1-X[:,2]**2)*A[2]
 
-    return np.array([s1, s2, s3, s4])
+    return [outx, outy, outz]
 
 

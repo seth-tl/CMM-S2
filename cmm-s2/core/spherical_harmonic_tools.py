@@ -8,35 +8,15 @@ import pdb, stripy, time
 from ..core import utils
 import pyssht as pysh
 from scipy.special import sph_harm
-from ..core.spherical_spline import spline_interp_vec, spline_interp_structured
+from ..core.spherical_spline import spherical_spline
 
 # Transform tools
-
-def Laplacian(A,L):
-    # computes the spherical Laplacian of the coefficient array A
-    # A should be an (L,2L+1) array of coefficients, L is the band-limit
-    els = np.arange(0,L)
-    L = -els*(els + 1)
-    return A*L[:,None]
-
-def Poisson_Solve(f,L):
-    # multiplies f in Fourier space by the inverse Laplacian.
-    # input: f - (2,l_max + 1, l_max + 1) array
-    els = np.arange(0,L)
-    #zero out first mode
-    els[0] = 1e16
-    L_inv = -1/(els*(els + 1))
-
-    return f*L_inv[:,None]
-
-def inv_Laplacian(samples,L, Method = "MWSS", Spin = 0):
+def inv_Laplacian(samples, L, L_inv):
     # helper function for barotropic vorticity projection
-    f_lm = pysh.forward(samples, L, Spin = 0, Method = Method, Reality = True, backend = 'ducc', nthreads = 8)
-    f_lm_coeffs = coeff_array(f_lm, L)
-    L_flm = Poisson_Solve(f_lm_coeffs,L)
+    f_lm = pysh.forward(samples, L, Spin = 0, Method = "MWSS", Reality = True, backend = 'ducc', nthreads = 8)
+    flm_coeffs = coeff_array(f_lm, L)*L_inv[:,None]
 
-    return L_flm
-
+    return flm_coeffs
 
 def MW_sampling(L, method = "MWSS"):
     # Sampling defined by the sampling theorem of McEwen and Wiaux on the sphere
@@ -66,128 +46,100 @@ def lm_array(coeffs,L):
     outs = [coeffs[l,m] for l in range(0,L) for m in range(0,2*l+1)]
     return np.array(outs)
 
-#Ladder operator computation
-def raise_op(alms, L):
-    # raising operator L_+ applied to the coefficients of a band-limited function
-    # with coefficients alm.
-
-    #Construct matrix based on band-limit L
-    L_p = np.fromfunction(lambda l,m: np.sqrt(l*(l+1)-(m-l)*(m-l-1)), (L,2*L+1), dtype = 'float64')
-    outs = np.zeros([L, 2*L+1],  dtype = 'complex128')
-    outs[:,1::] = alms[:,0:-1]
-    return np.multiply(L_p, outs)
-
-
-def lower_op(alms, L):
-    # lowering operator L_- applied to the coefficients of a band-limited function
-    # with coefficients alm.
-    L_m = np.fromfunction(lambda l,m: np.sqrt(l*(l+1)-(m-l)*(m-l+1)), (L,2*L+1), dtype = 'float64')
-    L_m[np.where(np.isnan(L_m))] = 0.
-    outs = np.zeros([L, 2*L+1],  dtype = 'complex128')
-    outs[:,0:-1] = alms[:,1::]
-
-    return np.multiply(L_m, outs)
-
-def angular_momentum(alms, L):
+def angular_momentum(alms, L_plus, L_minus, L_z, temp):
     # angular momentum operator (r \times \nabla) applied to sph_harm coeffs
-    out_x = (raise_op(alms, L) + lower_op(alms,L))/2
-    out_y = 1j*(lower_op(alms,L) - raise_op(alms,L))/2
+    temp *= 0 
+    temp[:,1::] = alms[:,0:-1]
+    out_plus = np.multiply(L_plus, temp)
+    
+    temp *= 0
+    temp[:,0:-1] = alms[:,1::]
+    out_minus = np.multiply(L_minus, temp)
 
-    L_z = np.fromfunction(lambda l,m: m-l, (L, 2*L+1), dtype = 'float64')
+    out_x = (out_plus + out_minus)/2
+    out_y = 1j*(out_minus - out_plus)/2
 
     return [1j*out_x, 1j*out_y, 1j*np.multiply(L_z,alms)]
 
 #--------------Projection onto spline space: -----------------------------------
-def prune(A):
-    # helper function for projection operation
-    outs = A[1:-1,:].real
-    outs = list(outs.reshape([len(outs[0,:])*len(outs[:,0]),]))
-    outs.append(A[-1,0])
-    outs.insert(0,A[0,0])
 
-    return outs
-
-
-def project_stream(alms, L, grid, Method = "MWSS"):
+def project_stream(alms, L, L_plus, L_minus, L_z, U, n, temp):
     """
-    function which outputs a spline interpolant defined over a structured
-    triangulation of the sphere allowing for O(1) querying.
-
-    alms should be a coefficient array of the stream function to be projected.
+    function which computes I_h^3[L \psi]
+    projects the psi function onto the velocity interpolation space
+    at the n-th point in time
     """
-    #computes gradient at grid points defined by bandlimit L
-    #if vector == False:
-    u_lms = angular_momentum(alms,L)
 
-    return project_onto_S12_PS_vector(u_lms, L, grid, Method = Method)
+    if U.stepping:
+        # shift all the values over and initialize the first interpolant
+        U.coeffs[0:2] = U.coeffs[1:3]
+        U.vals[0:2] = U.vals[1:3]
+
+    s_pts = U.mesh.grid_points
+    u_lms = angular_momentum(alms, L_plus, L_minus, L_z, temp)
+
+    for i in range(3):
+        # differentiate once again:
+
+        u_temp = pysh.inverse(lm_array(u_lms[i], L), L, Spin = 0, Method = "MWSS", Reality = True, backend = 'ducc', nthreads = 8)
+        U.vals[n,i,0,1:-1] = u_temp[1:-1].reshape((L-1)*2*L).real
+        # replace pole points
+        U.vals[n,i,0,-1] = u_temp[-1,0].real
+        U.vals[n,i,0,0] = u_temp[0,0].real
+
+        flm_ang = angular_momentum(u_lms[i], L_plus, L_minus, L_z, temp)
+        u_grad = np.array([pysh.inverse(lm_array(flm_ang[i],L), L, Spin = 0, Method = "MWSS", Reality = True, backend = 'ducc', nthreads = 8) for i in range(3)])
+        
+        u_grad[:] = tan_proj(utils.cross(u_grad,s_pts), s_pts) 
+        # pdb.set_trace()
+
+        # intermediate gradient replacement
+        U.vals[n,:,i+1,1:-1] = u_grad[:,1:-1,:].reshape([3,(L-1)*2*L]).real
+
+        # replace pole points
+        U.vals[n,:,i+1,-1] = u_grad[:,-1,0].real
+        U.vals[n,:,i+1,0] = u_grad[:,0,0].real
+
+    U.init_coeffs(n) 
+
+    return 
 
 
-def project_onto_S12_PS_vector(alms, L, grid, Method = "MWSS"):
+def project_onto_S12(alms, L, mesh):
     """
-    function which outputs a spline interpolant defined over a structured
-    triangulation of the sphere allowing for O(1) querying.
-
-    alms should be a coefficient array of the stream function to be projected.
+    function which computes I_h^3[f] from the spherical harmonic coefficients of f
     """
-    #computes gradient at grid points defined by bandlimit L
-    [X,Y,Z] = grid["sample_points"]
+    vals = np.zeros([4,len(mesh.vertices)])
 
+    L_plus = np.fromfunction(lambda l,m: np.sqrt(l*(l+1)-(m-l)*(m-l-1)), (L,2*L+1), dtype = 'float64')
+    L_minus = np.fromfunction(lambda l,m: np.sqrt(l*(l+1)-(m-l)*(m-l+1)), (L,2*L+1), dtype = 'float64')
+    L_plus[np.where(np.isnan(L_plus))] = 0. 
+    L_minus[np.where(np.isnan(L_minus))] = 0. 
+    L_z = np.fromfunction(lambda l,m: m-l, (L, 2*L+1), dtype = 'float64')
+    temp = 0*alms
 
-    values = []
-    grad_values = []
-    for flm in alms:
-        u_lms = [lm_array(A,L) for A in angular_momentum(flm,L)]
-        u_num = [pysh.inverse(u_lms[i], L, Spin = 0, Method = Method, Reality = True, backend = 'ducc', nthreads = 7) for i in range(3)]
-        # gradient operator
-        grad_vals = tan_proj(utils.cross(u_num,[X,Y,Z]), [X,Y,Z])
-        vals = pysh.inverse(lm_array(flm, L), L, Spin = 0, Method = Method, Reality = True, backend = 'ducc', nthreads = 7)
-
-        # vals and grad_vals should 1-D arrays
-        # perform pruning to the arrays
-        vals_n = prune(vals)
-        grad_vals_n = [prune(B) for B in grad_vals]
-
-        values.append(np.array(vals_n))
-        grad_values.append(np.array(grad_vals_n))
+    s_pts = mesh.grid_points
+    u_lms = angular_momentum(alms, L_plus, L_minus, L_z, temp)
+    u_grad = np.array([pysh.inverse(lm_array(u_lms[i], L), L, Spin = 0, Method = "MWSS", Reality = True, backend = 'ducc', nthreads = 8) for i in range(3)])
     
+    u_grad[:] = tan_proj(utils.cross(u_grad,s_pts), s_pts) # rotate
 
-    # arrange gradient
-    interpolant = spline_interp_vec(grid = grid["mesh"], simplices = grid["simplices"],
-                 msimplices = grid["msimplices"], phi = grid["phis"], theta = grid["thetas"],
-                 vals = values, grad_vals = grad_values)
-
-    return interpolant
-
-def project_onto_S12_PS(alms, L, grid, Method = "MWSS"):
-    """
-    function which outputs a spline interpolant defined over a structured
-    triangulation of the sphere allowing for O(1) querying.
-
-    alms should be a coefficient array of the stream function to be projected.
-    """
-    #computes gradient at grid points defined by bandlimit L
-    [X,Y,Z] = grid["sample_points"]
-
-    u_lms = [lm_array(A,L) for A in angular_momentum(alms,L)]
-    u_num = []
-    for i in [0,1,2]:
-        u_num.append(pysh.inverse(u_lms[i], L, Spin = 0, Method = Method, Reality = True, backend = 'ducc', nthreads = 5))
-
-    # gradient operator
-    grad_vals = tan_proj(utils.cross(u_num,[X,Y,Z]), [X,Y,Z])
-    vals = pysh.inverse(lm_array(alms, L), L, Spin = 0, Method = Method, Reality = True, backend = 'ducc', nthreads = 5)
-
-    # vals and grad_vals should 1-D arrays
-    # perform pruning to the arrays
-    vals_n = prune(vals)
-    grad_vals_n = np.array([prune(B) for B in grad_vals])
-
-    # perform projection
-    interpolant = spline_interp_structured(grid = grid["mesh"], simplices = grid["simplices"],
-                 msimplices = grid["msimplices"], phi = grid["phis"], theta = grid["thetas"],
-                 vals = np.array(vals_n), grad_vals = grad_vals_n)
+    vals[1::,1:-1] = u_grad[:,1:-1].reshape(3, (L-1)*2*L).real
+    # replace pole points
+    vals[1::,-1] = u_grad[:,-1,0].real
+    vals[1::,0] = u_grad[:,0,0].real
     
-    return interpolant
+    # replace the values:
+    vals_temp = pysh.inverse(lm_array(alms, L), L, Spin = 0, Method = "MWSS", Reality = True, backend = 'ducc', nthreads = 8)
+
+    vals[0,1:-1] = vals_temp[1:-1,:].reshape((L-1)*2*L).real
+    # replace pole points
+    vals[0,-1] = vals_temp[-1,0].real
+    vals[0,0] = vals_temp[0,0].real
+
+    coeffs = np.zeros([19, np.shape(mesh.vertices[np.array(mesh.simplices)])[0]])
+
+    return spherical_spline(mesh, vals, coeffs)
 
 
 def proj(a,b):

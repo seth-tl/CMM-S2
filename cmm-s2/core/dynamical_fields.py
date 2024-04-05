@@ -1,7 +1,6 @@
 #/----
 """
-This scripts provides the base classes for the spatio-temporal interpolants
-defining the velocity fields. Along with defining the test velocity fields and
+This scripts contains the test velocity fields and
 initial voriticity distributions used in the experimentation.
 """
 #/----
@@ -10,51 +9,6 @@ import numpy as np
 import pdb
 from scipy.special import sph_harm 
 from . import utils
-
-# ------ Velocity field interpolants -------------------------------------------
-class velocity_interp():
-    """
-    class to perform interpolation in time for velocity fields.
-    """
-
-
-    def __init__(self, Vs, t0):
-
-        self.Vs = Vs #list of spline_interp_vec objects
-        self.t0 = t0 #start time of the interpolant
-
-        return
-
-    def __call__(self, t, dt, xyz):
-        # TODO: get rid of these if statements
-
-        if len(self.Vs) == 3:
-            tau0, tau1, tau2 = self.t0, self.t0 + dt, self.t0 + 2*dt
-            l0 = (t-tau1)*(t-tau2)/(2*dt**2)
-            l1 = (t-tau0)*(t-tau2)/(-dt**2)
-            l2 = (t-tau0)*(t-tau1)/(2*dt**2)
-
-            v0 = self.Vs[0].eval(xyz)
-            v1 = self.Vs[1].eval(xyz)
-            v2 = self.Vs[2].eval(xyz)
-
-            return l0*v0 + l1*v1 + l2*v2
-
-
-        if len(self.Vs) == 1:
-            v_out = self.Vs[0].eval(xyz)
-
-            return v_out
-
-        if len(self.Vs) == 2:
-            tau = (t - self.t0)/dt
-            v0 = self.Vs[0].eval(xyz)
-            v1 = self.Vs[1].eval(xyz)
-
-            return (1-tau)*v0 + tau*v1
-
-
-# ------------------------------------------------------------------------------
 
 #-----------Linear advection test velocity fields-------------------------------
 pi = np.pi
@@ -140,7 +94,7 @@ def rotating_vort_IC(t,xyz):
     rho = rho_0*np.sin(theta)
     return 1-np.tanh((rho/5)*np.sin(phi-omega_r(theta)*t))
 
-def u_div(t,dt, X):
+def u_div(t, dt, X):
     [phi, theta] = utils.cart2sphere(X)
     u = -(np.sin(phi/2)**2)*np.sin(2*theta)*np.sin(theta)*np.cos(pi*t/T)
     v = (-1/2)*np.sin(phi)*(np.sin(theta)**3)*np.cos(pi*t/T)
@@ -188,12 +142,7 @@ def IC_SC(phi,theta):
     arg2 = np.sin(the_c2-pi/2)*np.sin(theta-pi/2) + np.cos(the_c2-pi/2)*np.cos(theta-pi/2)*np.cos(phi-phi_c2)
 
     r_p = np.arccos(arg1)
-    # inds1_0 = np.where(r_p <= R & np.absolute(phi - phi_c1) >= R/6)
-    # inds1 = np.where(r_p <= R & np.absolute(phi - phi_c1) < R/6 & (theta - theta_c1 - pi/2) < -5*R/12)
     out = 0*theta
-    #phi, theta = Mod(phi, theta)
-    #phi_mod = (phi + pi) % 2*pi - pi
-    # phi_c1, phi_c2 = -pi/6, pi/6
 
     out[(r_p <= R) & (np.absolute(phi - phi_c1) >= R/6)] = 0.9
     out[(r_p <= R) & (np.absolute(phi - phi_c1) < R/6) & (theta < (-5*R/12+pi/2))] = 0.9
@@ -236,12 +185,17 @@ def zonal_jet(phi, theta):
     u_lt = (pi/2)*np.exp(-2*beta2*(1-np.cos(-theta+pi/2-theta_c)))
     return (np.cos(-theta+pi/2)*(2*beta2*(np.cos(theta_c)*np.sin(-theta+pi/2) - np.sin(theta_c)*np.cos(-theta+pi/2))) + np.sin(pi/2 - theta))*u_lt
 
-pert = 0.01
 def perturbed_zonal_jet(phi, theta):
     beta2 = 12**2
-    theta_c = pi/4 + 0.01*np.cos(pert*phi)
+    theta_c = pi/4 + 0.01*np.cos(12*phi)
     u_lt = (pi/2)*np.exp(-2*beta2*(1-np.cos(-theta+pi/2-theta_c)))
     return (np.cos(-theta+pi/2)*(2*beta2*(np.cos(theta_c)*np.sin(-theta+pi/2) - np.sin(theta_c)*np.cos(-theta+pi/2))) + np.sin(pi/2 - theta))*u_lt
+
+
+def multi_jet(phi, theta):
+    u1 = perturbed_zonal_jet(phi,theta)
+    u2 = perturbed_zonal_jet(phi, theta-pi/8)
+    return u1 + u2
 
 def gaussian_vortex(phi, theta):
     [x,y,z] = utils.sphere2cart(phi,theta)
@@ -251,10 +205,9 @@ def gaussian_vortex(phi, theta):
 def rossby_wave(phi, theta, t = 0):
     # Rossby Haurwitz wave (\ell,m) = (5,4)
     ell = 5
-    # C = 1 #(ell*(ell + 1))/((ell*(ell + 1)) -2)
     alpha = 1/(ell*(ell+1))
     Omega = 2*pi
-    return 30*np.cos(theta)*np.cos(4*(phi + 2*Omega*alpha*t))*np.sin(theta)**4 #+ C*4*pi*cos(theta)
+    return 30*np.cos(theta)*np.cos(4*(phi + 2*Omega*alpha*t))*np.sin(theta)**4 
 
 # perturbed Rossby-Haurwitz wave
 def perturbed_rossby_wave(phi, theta):

@@ -5,21 +5,20 @@ operations.
 """
 # -----------------------------------------------------------------------------
 import stripy, igl, pdb
+import pyssht as pysh
 import numpy as np
 from . import utils
-from scipy.spatial import Delaunay, ConvexHull, cKDTree
+from scipy.spatial import Delaunay
 from numba import njit
 # -----------------------------------------------------------------------------
-
-# basic 2D mesh classes
-
 # spherical triangulation--------------------------------------
 class spherical_triangulation(object):
     """
     Base class for spherical triangulation
     mesh generation from the stripy package which provides a wrapper
     to the Fortran package STRIPACK of R.J. Renka.
-    Modifications have been made to the class simply for the use case here.
+    Stripy package generates the triangulation and we use scipy.Delaunay
+    to perform the querying.
 
     input:
         pts - (N,3) set of points on sphere in Cartesian coords
@@ -27,7 +26,7 @@ class spherical_triangulation(object):
                             of the initial triangulation.
     output: spherical triangulation of the points
     """
-    def __init__(self, pts, refinement_levels = 0, stencils = None):
+    def __init__(self, pts, refinement_levels = 0):
 
         # these are the lat-lon coordinates used by the stripy package
         lons = np.arctan2(pts[:,1], pts[:,0])
@@ -38,7 +37,7 @@ class spherical_triangulation(object):
                                       permute = True, tree = False)
 
         self.vertices = grid.points
-        #enforcing the Delaunay condition might not be smart in the future
+
         origin = np.array([0,0,0])
         ppoints = np.vstack((origin, grid.points))
         mesh_d = Delaunay(ppoints)
@@ -55,18 +54,14 @@ class spherical_triangulation(object):
         
         #flip the last two vectices to reverse orientation
         simps[inds_1,2:0:-1] = simps[inds_1,1::]
-        v_pts1 = self.vertices[simps]
         
         self.mesh_d = mesh_d
 
         self.simplices = simps
         self.x, self.y, self.z = grid.x, grid.y, grid.z
 
-        # # option to precompute stencil points or pass from another mesh
-        if stencils == None:
-            self.stencil_pts()
-        else:
-            self.stencil_pts = stencils
+        self.stencil_pts()
+        self.ps_split = self.ps_split()
             
         return
 
@@ -83,40 +78,40 @@ class spherical_triangulation(object):
                 trangs - (N,) list of triangle indices in self.simplices
                 vs - (N,3,3) array of corresponding vertex coordinates
         """
-        tri_data = igl.point_mesh_squared_distance(q_pts.T, self.vertices, np.array(self.simplices))
-        trangs = tri_data[1]
-        tri_out = self.simplices[trangs.reshape(-1)]
-        vs = self.vertices[tri_out]
-        bcc = utils.bary_coords(vs[:,0,:],vs[:,1,:], vs[:,2,:], q_pts.T)
-        
-        # TODO: get rid of the necessity of performing this operation
-        inds0 = np.where(bcc < 0)
-        # extract relevant points
-        q_pts2 = q_pts[:, inds0[0]]
-        
-        indsn0 = self.mesh_d.find_simplex(q_pts2.T/2)
-        simps = self.simplices[indsn0]
-        vs2 = self.vertices[simps]
-        #replace with corrected values
-        bcc[inds0[0],:] = utils.bary_coords(vs2[:,0,:],vs2[:,1,:], vs2[:,2,:], q_pts2.T)
-        
-        trangs[inds0[0]] = indsn0
-        vs[inds0[0],:,:] = vs2
-        
+
+        trangs = self.mesh_d.find_simplex(q_pts/2) # have to scale down so that the points are in the tetrahedron
+        vs = self.vertices[self.simplices[trangs]]
+
+        # also compute barycentric coordinates
+        bcc = utils.bary_coords(vs[:,0,:], vs[:,1,:], vs[:,2,:], q_pts)
+
         return bcc, trangs, vs
     
-        # # obtain containing triangle from the igl package helper function
-        # tri_data = igl.point_mesh_squared_distance(q_pts.T, self.vertices,
-        #                                            np.array(self.simplices))
-        # # second output is the containing triangle index
-        # trangs = tri_data[1]
+        tri_data = igl.point_mesh_squared_distance(q_pts, self.vertices, np.array(self.simplices))
 
-        # # compute other relevant quantities
+        
+        # pdb.set_trace()
+        # tri_data = igl.point_mesh_squared_distance(q_pts, self.vertices, np.array(self.simplices))
+        # trangs = tri_data[1]
         # tri_out = self.simplices[trangs.reshape(-1)]
         # vs = self.vertices[tri_out]
-        # bcc = utils.bary_coords(vs[:,0,:],vs[:,1,:], vs[:,2,:], q_pts.T)
+        # bcc = utils.bary_coords(vs[:,0,:],vs[:,1,:], vs[:,2,:], q_pts)
 
+        # inds0 = np.where(bcc < 0)
+        # # extract relevant points
+        # q_pts2 = q_pts[:, inds0[0]]
+        
+        # indsn0 = self.mesh_d.find_simplex(q_pts2.T/2)
+        # simps = self.simplices[indsn0]
+        # vs2 = self.vertices[simps]
+        # #replace with corrected values
+        # bcc[inds0[0],:] = utils.bary_coords(vs2[:,0,:],vs2[:,1,:], vs2[:,2,:], q_pts2)
+        
+        # trangs[inds0[0]] = indsn0
+        # vs[inds0[0],:,:] = vs2     
         # return bcc, trangs, vs
+
+
 
     def ps_split(self):
 
@@ -155,9 +150,9 @@ class spherical_triangulation(object):
         return Hs, Gs, Es
 
     def stencil_pts(self, eps = 1e-5):
-        # void function to precompute the stencil points on the mesh
-        # saves also the orthonormal basis at the vertices for gradient calc.
-        # this works exclusively for isosahedral mesh
+        # void function to precompute the stencil points
+        # and an the orthonormal basis at the vertices of the mesh
+
         verts = self.vertices
         # form direction vectors from every vertex
         a1 = np.array(utils.cross(verts.T,[0,0,1])).T
@@ -180,8 +175,8 @@ class spherical_triangulation(object):
         eps_2m = verts + a1_n*eps + a2_n*eps
 
         # define the stencil points for the mesh
-        spts = [utils.pi_proj(eps_1p, verts), utils.pi_proj(eps_1m, verts), utils.pi_proj(eps_2p, verts),
-                utils.pi_proj(eps_2m, verts)]
+        spts = [utils.pi_proj(eps_1p, verts), utils.pi_proj(eps_1m, verts), 
+                utils.pi_proj(eps_2p, verts), utils.pi_proj(eps_2m, verts)]
 
         #arrange more conveniently for integration scheme
         spts = [np.array([spts[0][0,:], spts[1][0,:], spts[2][0,:], spts[3][0,:]]),
@@ -195,56 +190,156 @@ class spherical_triangulation(object):
         return
 
 
-def det2D(v1,v2,v3):
-    return  1*v2[:,0]*v3[:,1] + 1*v3[:,0]*v1[:,1] + 1*v1[:,0]*v2[:,1] - (1*v2[:,0]*v1[:,1] + 1*v3[:,0]*v2[:,1] + 1*v1[:,0]*v3[:,1])
+class structure_spherical_triangulation(object):
+    """ 
+    Basic mesh structure for the velocity field.
+    Defines a structured-spherical triangulation on the grid points allowing for faster querying strategy
 
+    """
+    def __init__(self, L):
 
-class torus_mesh():
-    # TODO: include functionality for variable size (changes fft functions)
-    def __init__(self, Nx, Ny):
-        self.xs = np.linspace(0, 2*np.pi, Nx, endpoint = False)
-        self.ys = np.linspace(0, 2*np.pi, Ny, endpoint = False)
+        [thetas, phis] = pysh.sample_positions(L, Method = "MWSS", Grid = False)
+        [Phi, The] = np.meshgrid(phis, thetas)
+        self.grid_points = utils.sphere2cart(Phi, The)
 
-        X0 = np.meshgrid(self.xs, self.ys)
-        self.vertices = X0
-        # initialize the stencil points
-        eps = 1e-5
-        self.s_pts = [np.array([X0[0] - eps, X0[1] - eps]), np.array([X0[0] - eps, X0[1] + eps]),
-                np.array([X0[0] + eps, X0[1] - eps]), np.array([X0[0] + eps, X0[1] + eps])]
+        #create a dictionary for the grid
+        N, M = len(phis), len(thetas)
+        XX = np.meshgrid(phis, thetas[1:-1])
+        ico = spherical_mesh(XX[0], XX[1], N, M-2)
+
+        simplices, msimplices = full_assembly(len(phis), len(thetas))
+
+        self.vertices = ico.points
+        self.phi = phis; self.theta = thetas
+        self.simplices = simplices; self.msimplices = msimplices; 
+        
+        self.ps_split = self.ps_split()
 
         return
-    
-    def query(self, phi0, theta0):
 
-        phi = phi0 % (2*np.pi)
-        theta = theta0 % (2*np.pi)
-        dphi = abs(self.xs[1]-self.xs[0])
-        dthe = abs(self.ys[1]-self.ys[0])
+    def query(self, q_pts):
+        [phi,theta] = utils.cart2sphere(q_pts.T)
+        ijs = self.inds(phi,theta)
+        return self.containing_simplex_and_bcc_structured(ijs, q_pts)
 
-        ijs = [((phi-self.xs[0])//dphi).astype(int),
-                ((theta-self.ys[0])//dthe).astype(int)]
+    def inds(self, phiq, thetaq):
+        """
+        input a value (phi,theta) to interpolate
+        phi0, theta0 should be meshgrids with the same amount of points and
+        square.
 
-        # if any point landed exactly on boundary:
-        ijsnx = np.where(ijs[0] == len(self.xs))
-        ijsny = np.where(ijs[1] == len(self.ys))
+        phi_s0, theta_s0: Numpy array of 4 meshgrids of the stencils points
+        each grid represents one of the four corners.
 
-        # send to 0:
-        theta[ijsny] = 0.; phi[ijsnx] = 0.
+        output: list of indices, base points of position in the cell also
+        position of the stencil point relative to the cell
+        """
 
-        # then mod out :
-        ijs = [ijs[0] % len(self.xs), ijs[1] % len(self.ys)]
+        dphi = abs(self.phi[1]-self.phi[0])
+        dthe = abs(self.theta[1]-self.theta[0])
+        #Properly account for values outside of the interval
+        phiq_n = phiq % (2*np.pi)
+        phi_l = ((phiq_n-self.phi[0])//dphi).astype(int) % (len(self.phi))
+        #don't mod this direction, just correct for boundary
+        theta_l = ((thetaq-self.theta[0])//dthe).astype(int)
 
+        theta_l[theta_l == (len(self.theta)-1)] = len(self.theta)-2
+        
+        # also compute position within the cell
+        phi_c = (phiq_n-self.phi[phi_l])/dphi
+        theta_c = (thetaq-self.theta[theta_l])/dthe
 
-        # ijs = [((phi-self.xs[0])//dphi).astype(int) % (len(self.xs)),
-        #        ((theta-self.ys[0])//dthe).astype(int) % (len(self.ys))]
+        #need added check if query lands on theta_c = 0 or 1 lines.
+        inds0 = np.where((theta_c <= 0.03) & (theta_l != 0))
+        inds1 = np.where((theta_c > 0.85) & (theta_l !=  len(self.theta)-2))
 
-        q_pts = [(phi-self.xs[ijs[0]])/dphi,(theta-self.ys[ijs[1]])/dthe]
+        phi_p1 = (phi_l + 1) % (len(self.phi))
+        the_p1 = theta_l + 1
 
-        return ijs, q_pts
+        #in or outside triangle for theta_c = 0.
+        v_0 = np.array(utils.sphere2cart(self.phi[phi_l[inds0]], self.theta[theta_l[inds0]]))
+        v_1 = np.array(utils.sphere2cart(self.phi[phi_p1[inds0]], self.theta[theta_l[inds0]]))
 
+        n_vs = utils.cross(v_0, v_1)
+        q_pts0 = np.array(utils.sphere2cart(phiq_n[inds0], thetaq[inds0]))
+        s_inds0 = np.heaviside(utils.dot(n_vs, q_pts0), 0).astype(int)
 
+        theta_l[inds0] = theta_l[inds0]-s_inds0
+        #in or outside triangle for theta_c = 0.
+        v_01 = np.array(utils.sphere2cart(self.phi[phi_l[inds1]], self.theta[the_p1[inds1]]))
+        v_11 = np.array(utils.sphere2cart(self.phi[phi_p1[inds1]], self.theta[the_p1[inds1]]))
 
-# 3D mesh classes. ------------------------------
+        n_vs2 = utils.cross(v_01, v_11)
+        q_pts1 = np.array(utils.sphere2cart(phiq_n[inds1], thetaq[inds1]))
+
+        s_inds1 = np.heaviside(-utils.dot(n_vs2, q_pts1), 0).astype(int)
+
+        theta_l[inds1] = theta_l[inds1] + s_inds1
+
+        return [phi_l, theta_l] #, [phi_c, theta_c]
+
+    def containing_simplex_and_bcc_structured(self, inds, pts):
+        #obtain indices of which half of quadralateral
+        phi0, theta0 = self.phi[inds[0]], self.theta[inds[1]]
+        v_0 = utils.sphere2cart(phi0, theta0)
+
+        # For the endpoint:
+        ijsp1 = [inds[0].copy() + 1, inds[1].copy() + 1]
+        ijsp1[0] = ijsp1[0] % (len(self.phi))
+
+        phi_p1, theta_p1 = self.phi[ijsp1[0]], self.theta[ijsp1[1]]
+
+        v_1 = np.array(utils.sphere2cart(phi_p1, theta_p1))
+
+        n_vs = utils.cross(v_0, v_1)
+        s_inds = np.heaviside(-utils.dot(n_vs, pts.T), 0).astype(int)
+        tri_out_temp = self.msimplices[inds[1], inds[0], :] #.reshape([len(pts),2])
+
+        # now assemble triangle list
+        l = np.shape(tri_out_temp)[0]
+        tri_out = np.array(list(tri_out_temp[np.arange(0,l),s_inds]))
+        trangs = tri_out[:,3]
+        verts = self.vertices[tri_out[:,0:3]]
+
+        bcc = utils.bary_coords(verts[:,0,:], verts[:,1,:], verts[:,2,:], pts)
+
+        return bcc, trangs, verts
+
+    def ps_split(self):
+
+        # these are all recycled quantities used for the Powell-Sabin interpolant
+        inds = np.array(self.simplices)
+        v_pts = self.vertices[inds]
+        v1, v2, v3 = v_pts[:,0,:].copy(), v_pts[:,1,:].copy(), v_pts[:,2,:].copy()
+        v4 = utils.div_norm((v1 + v2 + v3)/3).T
+        e1, e2, e3 = utils.div_norm(v1/2+v2/2).T, utils.div_norm(v2/2+v3/2).T, utils.div_norm(v3/2 + v1/2).T
+
+        # Hs correspond to tangential projection of vectors along the split
+        h12, h21, h23 = sphere_tan_proj(v2-v1,v1).T, sphere_tan_proj(v1-v2,v2).T, sphere_tan_proj(v3-v2,v2).T
+        h32, h13, h31 = sphere_tan_proj(v2-v3,v3).T, sphere_tan_proj(v3-v1,v1).T, sphere_tan_proj(v1-v3,v3).T
+        h41, h42, h43 = sphere_tan_proj(v4-v1,v1).T, sphere_tan_proj(v4-v2,v2).T, sphere_tan_proj(v4-v3,v3).T
+
+        # Gs barycentric coordinates within each split triangle
+        g12, g21 = utils.bary_coords(v1,e1,v4,h12), utils.bary_coords(v2,v4,e1,h21)
+        g23, g32 = utils.bary_coords(v2,e2,v4,h23), utils.bary_coords(v3,v4,e2,h32)
+        g13, g31 = utils.bary_coords(v1,v4,e3,h13), utils.bary_coords(v3,e3,v4,h31)
+
+        g14 = utils.bary_coords(v1,v4,e3, sphere_tan_proj(v4,v1).T)
+        g24 = utils.bary_coords(v2,v4,e1, sphere_tan_proj(v4,v2).T)
+        g34 = utils.bary_coords(v3,v4,e2, sphere_tan_proj(v4,v3).T)
+
+        # barycentric coordinates of midpoint
+        mid = utils.bary_coords(v1,v2,v3,v4)
+
+        # barycentric coordinates of the edge vectors
+        e_1, e_2, e_3 = utils.bary_coords(v1,v2,v3,e1), utils.bary_coords(v1,v2,v3,e2), utils.bary_coords(v1,v2,v3,e3)
+
+        # organize data, naming subject to scrutiny
+        Hs = [h12.T, h21.T, h23.T, h32.T, h13.T, h31.T, h41.T, h42.T, h43.T]
+        Gs = [g12, g21, g23, g32, g13, g31, g14, g24, g34, mid]
+        Es = [e_1, e_2, e_3]
+
+        return Hs, Gs, Es
 
 def sphere_tan_proj(a,b):
     """
@@ -256,8 +351,6 @@ def sphere_tan_proj(a,b):
     d = np.sqrt(utils.dot(a.T,a.T) - 2*c**2 + utils.dot(b.T,b.T)*c**2)
 
     return np.array([(a[:,0]-c*b[:,0])/d, (a[:,1]-c*b[:,1])/d, (a[:,2]-c*b[:,2])/d])
-
-
 
 # functions related to discretization of velocity field:
 def spherical_mesh(phi, theta, N, M):
@@ -308,8 +401,6 @@ def full_assembly(N,M):
 
     return simps, msimplices
 
-
-
 def grid_assemble(N,M):
     """
     N,M are the length rows and columns of the overlain meshgrid.
@@ -344,67 +435,4 @@ def grid_assemble(N,M):
 
     return out
 
-# ==============================================================================
-
-
-
-# # -------- older querying routines ----------------------------
-# def bcc_simp_trang(points, simplices, q_pts, mesh_d):
-    # tri_data = igl.point_mesh_squared_distance(q_pts.T, self.vertices, np.array(self.simplices))
-    # trangs = tri_data[1]
-    # tri_out = self.simplices[trangs.reshape(-1)]
-    # vs = self.vertices[tri_out]
-    # bcc = utils.bary_coords(vs[:,0,:],vs[:,1,:], vs[:,2,:], q_pts.T)
-    # #
-    # inds0 = np.where(bcc < 0)
-    # # extract relevant points
-    # q_pts2 = q_pts[:, inds0[0]]
-    #
-    # indsn0 = self.mesh_d.find_simplex(q_pts2.T/2)
-    # simps = self.simplices[indsn0]
-    # vs2 = self.vertices[simps]
-    # #replace with corrected values
-    # bcc[inds0[0],:] = utils.bary_coords(vs2[:,0,:],vs2[:,1,:], vs2[:,2,:], q_pts2.T)
-    #
-    # trangs[inds0[0]] = indsn0
-    # vs[inds0[0],:,:] = vs2
-    #
-    # return bcc, trangs, vs
-#
-# def c_sim_bcc_scipy(mesh_d, points, simplices, q_pts):
-#
-#     inds = mesh_d.find_simplex(q_pts.T/2)
-#     #subtract one to account for added origin
-#     simps = mesh_d.simplices[inds] - 1
-#     #now need to remove all the zeros
-#     simps0 = np.array([T[T != -1] for T in simps])
-#     vs = points[simps0]
-#     bcc = bary_coords(vs[:,0,:],vs[:,1,:], vs[:,2,:], q_pts.T)
-#
-#     return bcc, inds, vs
-
-
-# vertices = grid.points
-# #enforcing the Delaunay condition might not be smart in the future
-# origin = np.array([0,0,0])
-# ppoints = np.vstack((origin, grid.points))
-# mesh_d = Delaunay(ppoints)
-#
-# simps0 = mesh_d.simplices - 1
-# #now need to remove all the zeros
-# simps = np.array([T[T != -1] for T in simps0])
-#
-# v_pts2 = vertices[simps]
-# dets2 = utils.det_vec([v_pts2[:,0,:], v_pts2[:,1,:], v_pts2[:,2,:]])
-#
-# #correct for the orientation
-# inds_1 = np.where(dets2 < 0)
-#
-# #flip the last two vectices to reverse orientation
-# simps[inds_1,2:0:-1] = simps[inds_1,1::]
-# v_pts1 = vertices[simps]
-# dets1 = utils.det_vec([v_pts1[:,0,:], v_pts1[:,1,:], v_pts1[:,2,:]])
-#
-# # self.mesh_d = mesh_d
-
-# # -------------------------------------------------------
+# =============================================================================
