@@ -86,30 +86,6 @@ class spherical_triangulation(object):
         bcc = utils.bary_coords(vs[:,0,:], vs[:,1,:], vs[:,2,:], q_pts)
 
         return bcc, trangs, vs
-    
-        tri_data = igl.point_mesh_squared_distance(q_pts, self.vertices, np.array(self.simplices))
-
-        
-        # pdb.set_trace()
-        # tri_data = igl.point_mesh_squared_distance(q_pts, self.vertices, np.array(self.simplices))
-        # trangs = tri_data[1]
-        # tri_out = self.simplices[trangs.reshape(-1)]
-        # vs = self.vertices[tri_out]
-        # bcc = utils.bary_coords(vs[:,0,:],vs[:,1,:], vs[:,2,:], q_pts)
-
-        # inds0 = np.where(bcc < 0)
-        # # extract relevant points
-        # q_pts2 = q_pts[:, inds0[0]]
-        
-        # indsn0 = self.mesh_d.find_simplex(q_pts2.T/2)
-        # simps = self.simplices[indsn0]
-        # vs2 = self.vertices[simps]
-        # #replace with corrected values
-        # bcc[inds0[0],:] = utils.bary_coords(vs2[:,0,:],vs2[:,1,:], vs2[:,2,:], q_pts2)
-        
-        # trangs[inds0[0]] = indsn0
-        # vs[inds0[0],:,:] = vs2     
-        # return bcc, trangs, vs
 
 
 
