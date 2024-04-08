@@ -13,7 +13,7 @@ from ..core import spherical_harmonic_tools as sph_tools
 from ..core.spherical_spline import sphere_diffeomorphism
 #--------------------------------- Setup --------------------------------------
 
-path_to_data = '/mnt/c/Users/setht/Research/GitHub_Repos/CMM-S2'
+path_to_data = ''
 
 name = sys.argv[1]
 
