@@ -6,7 +6,7 @@
 
 # Functionality
 
-The current implementation is capable of simulating turbulent fluid dynamics on a rotating sphere in the form of the barotropic vorticity equations and could be readily extended to other incompressible flow such as the quasi-geostrophic equations. It further provides a base solver class for the transport equation, which can be ported into other solvers for tracer and flow map analysis. The possess a number of unique resolution properties including the ability to upsample the solution with the correct statistics at subgrid scales and to coherently transport a multi-scale field. Here is an example simulation from the paper [1](https://arxiv.org/pdf/2302.01205.pdf)
+The current implementation is capable of simulating turbulent fluid dynamics on a rotating sphere in the form of the barotropic vorticity equations and could be readily extended to other incompressible flow such as the quasi-geostrophic equations. It further provides a base solver class for the transport equation, which can be ported into other solvers for tracer and flow map analysis. The possess a number of unique resolution properties including the ability to upsample the solution with the correct statistics at subgrid scales and to coherently transport a multi-scale field. Here is an example simulation: (https://arxiv.org/pdf/2302.01205.pdf)
 
 ![image](./docs/assets/multi_jet_evolution_redo.png)
 ![image](./docs/assets/multi_jet_redo_zoom.png)
