@@ -208,7 +208,7 @@ class sphere_diffeomorphism(object):
     def eval_grad(self, q_pts, eval_pts):
         # Computes the differential of a map D\varphi_x : T_x M ---> T_{\varphi(x)}M
         # x = q_pts, varphi(x) = eval_pts
-        
+        # TODO: make cleaner
         bcc, trangs, v_pts = self.mesh.query(q_pts)
         bmm = bary_minmax(bcc)
 
@@ -246,7 +246,7 @@ class sphere_diffeomorphism(object):
         grad_map = [outs_x, outs_y, outs_z]
         norm_X = np.sqrt(eval_pts[0]**2 + eval_pts[1]**2 + eval_pts[2]**2)
 
-        # TODO: write this using matrix multplication
+       
         # X dot \nabla X:
         x_dot_gX = [eval_pts[0]*grad_map[0][0] + eval_pts[1]*grad_map[1][0] + eval_pts[2]*grad_map[2][0],
                     eval_pts[0]*grad_map[0][1] + eval_pts[1]*grad_map[1][1] + eval_pts[2]*grad_map[2][1],
