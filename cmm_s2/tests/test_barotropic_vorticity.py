@@ -4,7 +4,7 @@ Scripts to produce all the convergence tests for barotropic vorticity solver
 """
 # ------------------------------------------------------------------------------
 import numpy as np
-import pdb, stripy, time, pickle, sys
+import pdb, stripy, time, pickle, sys, os
 import pyssht as pysh
 from ..core.spherical_spline import sphere_diffeomorphism
 from ..core import evolution_functions as evol
@@ -28,7 +28,7 @@ eval_pts = np.array([s_points[0].reshape([N_pts*N_pts,]), s_points[1].reshape([N
 
 name = sys.argv[1]
 
-path_to_data = ''
+path_to_repo = os.getcwd() + '/cmm_s2'
 
 T = 1
 
@@ -63,7 +63,7 @@ for k in range(8):
 
     #define mesh:
     # load pre-computed mesh
-    mesh = pickle.load(open(path_to_data + '/data/icosahedral_mesh_ref_%s.txt' %k, "rb"))
+    mesh = pickle.load(open(path_to_repo + '/data/icosahedral_mesh_ref_%s.txt' %k, "rb"))
 
     # run and time the simulation:
     start, start_clock = time.perf_counter(), time.process_time()
