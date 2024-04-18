@@ -34,11 +34,11 @@ Please follow these steps to reproduce the results of the paper [1](https://arxi
 
 - `git pull` this repo
 - Create a directory called `data` in the same directory as the repo
-- Replace the variable `path_to_data` variable in the test_barotropic_vorticity.py file with the absolute path to the data folder.
+- Run `python -m cmm_s2.tests.precompute_meshes` to pre-compute the icosahedral discretizations of the sphere. 
 - From the repo directory run `python -m cmm_s2.tests.test_barotropic_vorticity test_name remapping` with `test_name` replaced by one of `zonal_jet`, `rossby_wave`, `rossby_wave_static`, or `gaussian_vortex` to produce the convergence test data. Replace remapping with `none` to run the same tests without the submap decomposition.
 - The computed errors are obtained by running `python -m cmm_s2.figures.data_gen_euler test_name remapping` for each of the test cases.
 - The experiments are run by `python -m cmm_s2.experiments.experiment_name` with `experiment_name` replaced by the name of the python script in the `cmm_s2/experiments/` directory. This will produce all the relevant map data and also perform the post-processing to produce the figures. 
-- The `cmm_s2/figures/` directory also contains the matlab scripts used to generate the figures. 
+- The `cmm_s2/figures/` directory contains the matlab scripts used to generate the figures. 
 
 
 # Cite
