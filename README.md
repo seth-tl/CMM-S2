@@ -70,4 +70,6 @@ The linear advection solver is based on the paper [2](https://www.sciencedirect.
 }
 
 ```
+-----
+Thank you for your interest in this work :)
 
