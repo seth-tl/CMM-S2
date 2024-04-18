@@ -3,11 +3,11 @@ Run this script to precompute the icosahedral meshes.
 """
 
 import numpy as np
-import pdb, stripy, pickle
+import pdb, stripy, pickle, os
 from ..core import mesh_functions as meshes
 from ..core import utils
 
-path_to_repo = ''
+path_to_repo = os.getcwd() + '/cmm_s2'
 
 
 for j in range(8):
