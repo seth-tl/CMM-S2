@@ -40,7 +40,7 @@ def test_func(xyz):
 # u_true = velocity.static_vort_IC(T, eval_pts)
 u_true = test_func(eval_pts)
 
-path_to_data = ''
+path_to_repo = os.getcwd() + '/cmm_s2'
 # time scaling -----
 for j in range(7):
 
