@@ -4,7 +4,7 @@ Condensate formation numerical experiment data generation script
 """
 # ------------------------------------------------------------------------------
 import numpy as np
-import pdb, stripy, time, pickle, scipy.io
+import pdb, stripy, time, pickle, scipy.io, os
 from ..core import utils
 from ..core import dynamical_fields as vel
 from ..core import spherical_simulations as sphere_sims
