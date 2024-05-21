@@ -26,7 +26,7 @@ Standard dependencies come from the `numpy` and `scipy` packages. Specific depen
 - The spherical harmonic transforms are performed using the `pyssht` [library](https://pypi.org/project/pyssht/)
 - The spherical mesh generation is performed using the `stripy` [package](https://pypi.org/project/stripy/)
 
-All dependencies can be installed via `pip`. <u> Note <u> the dependencies may change in the future. 
+All dependencies can be installed via `pip`. 
 
 # Instructions to reproduce results
 
@@ -70,6 +70,6 @@ The linear advection solver is based on the paper [2](https://www.sciencedirect.
 
 ```
 -----
-Thank you for your interest in this work.
+Thank you for your interest in this work :blush:
 
 
