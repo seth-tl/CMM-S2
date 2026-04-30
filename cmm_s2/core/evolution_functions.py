@@ -37,7 +37,7 @@ def RK3_proj(t,dt,xn,V):
     tpdt = t + dt
     v1 = V(tpdt, dt, xn)
 
-    step1 = div_norm(xn-dt*v1, xn, v1)
+    step1 = div_norm(xn-dt*v1)
     v2 = V(t, dt, step1)
 
     step2 = div_norm(xn - (dt/4)*(v1+v2))
